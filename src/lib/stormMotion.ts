@@ -25,6 +25,43 @@ export interface MotionSourceAlert {
   nws_id: string;
   event_type: string;
   storm_motion?: StormMotion | null;
+  // Optional polygon/geometry from the alert. `buildMotionFeatures` uses this
+  // only to decide whether the parent alert would render on the main alerts
+  // source — alerts with `geometry == null` are dropped by `snapshotToFeatures`,
+  // so we skip them here too and avoid emitting orphan motion vectors that
+  // would float with no accompanying polygon.
+  geometry?: GeoJSON.Geometry | null;
+}
+
+// MapLibre layer IDs that carry storm-motion features. Exported so the map
+// component can iterate them (e.g. to toggle visibility in forecast mode)
+// without duplicating the list. Order is deterministic for tests.
+export const MOTION_LAYER_IDS = [
+  'motion-line',
+  'motion-origin',
+  'motion-head',
+  'motion-ticks',
+] as const;
+
+// Minimal structural subset of the MapLibre Map API that `setMotionVisibility`
+// depends on — lets the helper stay unit-testable without pulling in maplibre-gl.
+export interface LayerVisibilityMap {
+  setLayoutProperty(layerId: string, prop: 'visibility', value: 'visible' | 'none'): void;
+  getLayer(layerId: string): unknown;
+}
+
+/**
+ * Toggle visibility of every storm-motion layer registered in
+ * `MOTION_LAYER_IDS`. No-op for any layer that isn't currently on the map,
+ * so the helper is safe to call before layer registration completes or after
+ * a partial teardown.
+ */
+export function setMotionVisibility(map: LayerVisibilityMap, visible: boolean): void {
+  const value = visible ? 'visible' : 'none';
+  for (const id of MOTION_LAYER_IDS) {
+    if (!map.getLayer(id)) continue;
+    map.setLayoutProperty(id, 'visibility', value);
+  }
 }
 
 // Nautical miles per kilometer conversion.
@@ -50,7 +87,10 @@ interface MotionFeatureProperties {
  *   2. Projected LineString from origin to the 45-minute forward terminus.
  *   3. Three tick Points at 15 / 30 / 45 minutes along the forward bearing.
  *
- * Alerts without storm_motion are skipped entirely.
+ * Alerts without storm_motion are skipped entirely. Alerts whose `geometry`
+ * is null/undefined are also skipped — they are filtered out of the main
+ * alerts source by `snapshotToFeatures`, so emitting motion features for
+ * them would produce orphan vectors with no accompanying polygon.
  */
 export function buildMotionFeatures(
   alerts: readonly MotionSourceAlert[],
@@ -60,6 +100,7 @@ export function buildMotionFeatures(
   for (const alert of alerts) {
     const motion = alert.storm_motion;
     if (!motion) continue;
+    if (alert.geometry == null) continue;
 
     const { origin_lat, origin_lon, direction_deg, speed_kt, valid_at } = motion;
     const forwardBearing = (direction_deg + 180) % 360;

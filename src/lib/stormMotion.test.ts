@@ -1,9 +1,33 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as turf from '@turf/turf';
-import { buildMotionFeatures, type MotionSourceAlert, type StormMotion } from './stormMotion';
+import {
+  buildMotionFeatures,
+  MOTION_LAYER_IDS,
+  setMotionVisibility,
+  type LayerVisibilityMap,
+  type MotionSourceAlert,
+  type StormMotion,
+} from './stormMotion';
+
+// A throwaway polygon used anywhere a test needs a non-null geometry. The
+// actual shape doesn't matter — buildMotionFeatures only checks for presence.
+const STUB_GEOMETRY: GeoJSON.Geometry = {
+  type: 'Polygon',
+  coordinates: [
+    [
+      [-89.5, 42.5],
+      [-89.4, 42.5],
+      [-89.4, 42.6],
+      [-89.5, 42.6],
+      [-89.5, 42.5],
+    ],
+  ],
+};
 
 // Helper — build a plausible alert payload. Only `storm_motion` varies between
 // cases; the rest is just identifying metadata the features propagate.
+// `geometry` defaults to a stub polygon so the core suite keeps rendering; the
+// null-geometry tests override it explicitly.
 function alert(
   motion: StormMotion | null | undefined,
   overrides: Partial<MotionSourceAlert> = {},
@@ -12,6 +36,7 @@ function alert(
     nws_id: 'KMKX.TO.W.0001',
     event_type: 'Tornado Warning',
     storm_motion: motion,
+    geometry: STUB_GEOMETRY,
     ...overrides,
   };
 }
@@ -190,5 +215,123 @@ describe('buildMotionFeatures', () => {
       units: 'kilometers',
     });
     expect(dist).toBeLessThan(1e-9);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Filter-drift regression coverage
+  //
+  // `snapshotToFeatures` in WeatherMap drops alerts whose geometry is null,
+  // so the alerts source never renders them. Motion features are fed from the
+  // same snapshot via a different path — if buildMotionFeatures didn't also
+  // skip null-geometry alerts, a storm motion vector could render on the map
+  // with no accompanying polygon. These tests lock in the alignment.
+  // ---------------------------------------------------------------------------
+
+  it('skips alerts with storm_motion but geometry === null (no orphan vectors)', () => {
+    const fc = buildMotionFeatures([alert(baseMotion, { geometry: null })]);
+    expect(fc).toEqual({ type: 'FeatureCollection', features: [] });
+  });
+
+  it('skips alerts with storm_motion but geometry === undefined', () => {
+    const fc = buildMotionFeatures([alert(baseMotion, { geometry: undefined })]);
+    expect(fc).toEqual({ type: 'FeatureCollection', features: [] });
+  });
+
+  it('emits 5 features when both storm_motion and geometry are present', () => {
+    const fc = buildMotionFeatures([alert(baseMotion, { geometry: STUB_GEOMETRY })]);
+    expect(fc.features).toHaveLength(5);
+  });
+
+  it('mixed input (motion+geo, motion+null, no motion) emits only the first alert’s 5 features', () => {
+    const fc = buildMotionFeatures([
+      alert(baseMotion, { nws_id: 'A', geometry: STUB_GEOMETRY }),
+      alert(baseMotion, { nws_id: 'B', geometry: null }),
+      alert(null, { nws_id: 'C', geometry: STUB_GEOMETRY }),
+    ]);
+    expect(fc.features).toHaveLength(5);
+    for (const f of fc.features) {
+      expect(f.properties?.nws_id).toBe('A');
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+// MOTION_LAYER_IDS + setMotionVisibility
+//
+// The map component toggles storm-motion layer visibility in forecast mode.
+// These tests pin the layer-ID contract and verify the pure helper handles
+// the "layer not yet registered" edge case without throwing.
+// -----------------------------------------------------------------------------
+
+describe('MOTION_LAYER_IDS', () => {
+  it('contains exactly 4 entries in a stable order', () => {
+    expect(MOTION_LAYER_IDS).toEqual(['motion-line', 'motion-origin', 'motion-head', 'motion-ticks']);
+    expect(MOTION_LAYER_IDS).toHaveLength(4);
+  });
+});
+
+describe('setMotionVisibility', () => {
+  // Build a fake MapLibre surface that records setLayoutProperty calls and
+  // reports whether each queried layer exists.
+  function makeMap(presentLayers: ReadonlySet<string>): LayerVisibilityMap & {
+    setLayoutProperty: ReturnType<typeof vi.fn>;
+    getLayer: ReturnType<typeof vi.fn>;
+  } {
+    return {
+      setLayoutProperty: vi.fn(),
+      getLayer: vi.fn((id: string) => (presentLayers.has(id) ? { id } : undefined)),
+    };
+  }
+
+  it('sets visibility to "none" on every present motion layer when visible=false', () => {
+    const allLayers = new Set<string>(MOTION_LAYER_IDS);
+    const map = makeMap(allLayers);
+
+    setMotionVisibility(map, false);
+
+    expect(map.setLayoutProperty).toHaveBeenCalledTimes(MOTION_LAYER_IDS.length);
+    for (const id of MOTION_LAYER_IDS) {
+      expect(map.setLayoutProperty).toHaveBeenCalledWith(id, 'visibility', 'none');
+    }
+  });
+
+  it('sets visibility to "visible" on every present motion layer when visible=true', () => {
+    const allLayers = new Set<string>(MOTION_LAYER_IDS);
+    const map = makeMap(allLayers);
+
+    setMotionVisibility(map, true);
+
+    expect(map.setLayoutProperty).toHaveBeenCalledTimes(MOTION_LAYER_IDS.length);
+    for (const id of MOTION_LAYER_IDS) {
+      expect(map.setLayoutProperty).toHaveBeenCalledWith(id, 'visibility', 'visible');
+    }
+  });
+
+  it('is a no-op for layers that are not registered (does not throw)', () => {
+    const map = makeMap(new Set());
+
+    expect(() => setMotionVisibility(map, false)).not.toThrow();
+    expect(map.setLayoutProperty).not.toHaveBeenCalled();
+  });
+
+  it('only updates the subset of motion layers that currently exist', () => {
+    const partial = new Set<string>(['motion-line', 'motion-head']);
+    const map = makeMap(partial);
+
+    setMotionVisibility(map, false);
+
+    expect(map.setLayoutProperty).toHaveBeenCalledTimes(2);
+    expect(map.setLayoutProperty).toHaveBeenCalledWith('motion-line', 'visibility', 'none');
+    expect(map.setLayoutProperty).toHaveBeenCalledWith('motion-head', 'visibility', 'none');
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      'motion-origin',
+      'visibility',
+      expect.anything(),
+    );
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      'motion-ticks',
+      'visibility',
+      expect.anything(),
+    );
   });
 });

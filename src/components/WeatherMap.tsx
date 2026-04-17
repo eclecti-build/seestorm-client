@@ -4,7 +4,11 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '@/lib/radar';
-import { buildMotionFeatures, type StormMotion } from '@/lib/stormMotion';
+import {
+  buildMotionFeatures,
+  setMotionVisibility,
+  type StormMotion,
+} from '@/lib/stormMotion';
 
 // Warning color map by NWS event type
 const WARNING_COLORS: Record<string, string> = {
@@ -353,17 +357,15 @@ export default function WeatherMap() {
       'alert-outlines-warning',
       'alert-outlines-watch',
       'alert-outlines-advisory',
-      // Motion layers follow the same gating — a motion vector is an
-      // observation of a storm's current velocity, which has no meaning
-      // when the user has scrubbed into a model forecast frame.
-      'motion-line',
-      'motion-origin',
-      'motion-ticks',
-      'motion-head',
     ];
     for (const layerId of alertLayerIds) {
       if (m.getLayer(layerId)) m.setLayoutProperty(layerId, 'visibility', alertVisibility);
     }
+    // Motion layers follow the same gating — a motion vector is an observation
+    // of a storm's current velocity, which has no meaning when the user has
+    // scrubbed into a model forecast frame. Driven from MOTION_LAYER_IDS so
+    // adding a new motion layer automatically stays hooked up.
+    setMotionVisibility(m, !isForecast);
   }, [mapReady, isLive, isForecast, forecastOffsetMin, sliderValue, history]);
 
   // Map init.
