@@ -5,29 +5,17 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '@/lib/radar';
 import { buildMotionFeatures, setMotionVisibility } from '@/lib/stormMotion';
-import ActiveAlertsPanel from './ActiveAlertsPanel';
-import type { ActiveAlert } from './alertTypes';
-
-// Warning color map by NWS event type
-const WARNING_COLORS: Record<string, string> = {
-  'Tornado Warning': '#FF0000',
-  'Tornado Watch': '#FFFF00',
-  'Severe Thunderstorm Warning': '#FFA500',
-  'Severe Thunderstorm Watch': '#DB7093',
-  'Flash Flood Warning': '#8B0000',
-  'Flash Flood Watch': '#2E8B57',
-  'Special Weather Statement': '#FFE4B5',
-};
-
-const WARNING_PRIORITY: Record<string, number> = {
-  'Tornado Warning': 0,
-  'Severe Thunderstorm Warning': 1,
-  'Flash Flood Warning': 2,
-  'Tornado Watch': 3,
-  'Severe Thunderstorm Watch': 4,
-  'Flash Flood Watch': 5,
-  'Special Weather Statement': 6,
-};
+import {
+  buildAlertViews,
+  WARNING_COLORS,
+  colorForEvent,
+  type AlertsResponse,
+  type IngestSnapshot,
+  type IngestAlert,
+  type WeatherAlert,
+} from '@/lib/alerts';
+import AlertsPanel from './AlertsPanel';
+import MapLegend from './MapLegend';
 
 // Wisconsin center coordinates
 const WISCONSIN_CENTER: [number, number] = [-89.5, 44.5];
@@ -43,42 +31,6 @@ const TILE_FADE_MS = 400; // MapLibre built-in in-tile fade
 // Types matching the Worker + ingest contract
 // ---------------------------------------------------------------------------
 
-// Map-internal shape (kept stable because all MapLibre render logic uses it).
-interface WeatherAlert {
-  type: 'Feature';
-  properties: {
-    event: string;
-    headline: string;
-    description: string;
-    severity: string;
-    urgency: string;
-    effective: string;
-    expires: string;
-    senderName: string;
-    areaDesc: string;
-  };
-  geometry: GeoJSON.Geometry | null;
-}
-
-interface AlertsResponse {
-  type: 'FeatureCollection';
-  features: WeatherAlert[];
-}
-
-// Ingest snapshot shape (from seestorm-ingest internal/publisher.Snapshot).
-// Intentionally different from the map-internal shape — we translate below for
-// MapLibre, but keep the raw list around for the ActiveAlertsPanel so
-// zone-aggregate products (Tornado Watch, SVR Watch, county-wide FFAs) with
-// `geometry: null` still surface to the user.
-type IngestAlert = ActiveAlert;
-
-interface IngestSnapshot {
-  generated_at: string;
-  area: string;
-  alert_count: number;
-  alerts: IngestAlert[];
-}
-
 // History list from `/v1/history`.
 interface HistoryEntry {
   ts: string;
@@ -89,37 +41,6 @@ interface HistoryResponse {
   snapshots: HistoryEntry[];
   truncated: boolean;
   count: number;
-}
-
-// ---------------------------------------------------------------------------
-// Snapshot transform
-// ---------------------------------------------------------------------------
-
-// Polygon-only projection into MapLibre FeatureCollection shape. Zone-aggregate
-// products (geometry === null) are intentionally excluded here — they can't be
-// drawn as polygons. Those alerts are surfaced through ActiveAlertsPanel
-// instead, which receives the full snapshot.alerts list.
-function snapshotToFeatures(snapshot: IngestSnapshot): AlertsResponse {
-  const features: WeatherAlert[] = snapshot.alerts
-    .filter((a): a is IngestAlert & { geometry: GeoJSON.Geometry } => a.geometry !== null)
-    .sort((a, b) => (WARNING_PRIORITY[a.event_type] ?? 99) - (WARNING_PRIORITY[b.event_type] ?? 99))
-    .map((a) => ({
-      type: 'Feature',
-      properties: {
-        event: a.event_type,
-        headline: a.headline,
-        description: a.description,
-        severity: a.severity,
-        urgency: '',
-        effective: a.effective_at,
-        expires: a.expires_at,
-        senderName: '',
-        areaDesc: a.area_desc,
-      },
-      geometry: a.geometry,
-    }));
-
-  return { type: 'FeatureCollection', features };
 }
 
 // ---------------------------------------------------------------------------
@@ -135,10 +56,10 @@ export default function WeatherMap() {
 
   // Full alert list (polygon + zone-only). Polygon features are pushed
   // directly into the MapLibre source via renderFeatures — no React state
-  // needed for them. This list is what the ActiveAlertsPanel and the count
+  // needed for them. This list is what the AlertsPanel and the count
   // badge consume, so Watches and other zone-aggregate products (no polygon)
   // remain visible even though they can't be drawn on the map.
-  const [allAlerts, setAllAlerts] = useState<IngestAlert[]>([]);
+  const [allAlerts, setAllAlerts] = useState<WeatherAlert[]>([]);
   const [snapshotTime, setSnapshotTime] = useState<Date | null>(null);
   const [selectedAlert, setSelectedAlert] = useState<WeatherAlert | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -188,10 +109,10 @@ export default function WeatherMap() {
       const response = await fetch('/v1/active-events.json');
       if (!response.ok) return;
       const snapshot: IngestSnapshot = await response.json();
-      const features = snapshotToFeatures(snapshot);
-      setAllAlerts(snapshot.alerts);
+      const { mapFeatures, listAlerts } = buildAlertViews(snapshot);
+      setAllAlerts(listAlerts);
       setSnapshotTime(new Date(snapshot.generated_at));
-      renderFeatures(features);
+      renderFeatures(mapFeatures);
       renderMotion(snapshot.alerts);
     } catch (err) {
       console.error('Failed to fetch live snapshot:', err);
@@ -205,10 +126,10 @@ export default function WeatherMap() {
         const response = await fetch(`/v1/history/${ts}`);
         if (!response.ok) return;
         const snapshot: IngestSnapshot = await response.json();
-        const features = snapshotToFeatures(snapshot);
-        setAllAlerts(snapshot.alerts);
+        const { mapFeatures, listAlerts } = buildAlertViews(snapshot);
+        setAllAlerts(listAlerts);
         setSnapshotTime(new Date(snapshot.generated_at));
-        renderFeatures(features);
+        renderFeatures(mapFeatures);
         renderMotion(snapshot.alerts);
       } catch (err) {
         console.error('Failed to fetch historical snapshot:', err);
@@ -626,6 +547,31 @@ export default function WeatherMap() {
         },
       });
 
+      // Speed label at the 45-minute terminus (e.g. "35 mph"). Text halo keeps
+      // the label readable over radar returns + basemap at any zoom. The
+      // `label` feature kind is emitted by buildMotionFeatures, co-located
+      // with the terminus point; offset up-and-right so it doesn't overlap
+      // the arrowhead.
+      m.addLayer({
+        id: 'motion-label',
+        type: 'symbol',
+        source: 'alert-motion',
+        filter: ['==', ['get', 'kind'], 'label'],
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-size': 11,
+          'text-offset': [0.8, -0.8],
+          'text-anchor': 'bottom-left',
+          'text-allow-overlap': true,
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#000000',
+          'text-halo-width': 1.5,
+        },
+      });
+
       // Click / hover must fire for any tier — the popup is tier-agnostic.
       const fillLayerIds = [
         'alert-fills-warning',
@@ -693,13 +639,18 @@ export default function WeatherMap() {
 
       {/* Active alerts list — surfaces every alert (polygon + zone-only).
           Critical for Watches and other zone-aggregate products that have
-          no geometry and therefore don't appear on the map. */}
-      <ActiveAlertsPanel
+          no geometry and therefore don't appear on the map. Clicking a card
+          drives the same selectedAlert popup the map polygons do. */}
+      <AlertsPanel
         alerts={allAlerts}
-        colors={WARNING_COLORS}
-        priority={WARNING_PRIORITY}
+        onSelect={setSelectedAlert}
+        selectedId={selectedAlert?.properties.nwsId ?? null}
         now={now}
       />
+
+      {/* Static legend — collapsed by default; explains polygon tiers + motion
+          vector glyphs so new users can read the map without an onboarding. */}
+      <MapLegend />
 
       {/* Historical mode indicator — radar + alerts are NOT current */}
       {!isLive && !isForecast && (
@@ -738,7 +689,7 @@ export default function WeatherMap() {
           <div
             className="text-xs font-bold uppercase tracking-wide mb-1"
             style={{
-              color: WARNING_COLORS[selectedAlert.properties.event] ?? '#888888',
+              color: colorForEvent(selectedAlert.properties.event),
             }}
           >
             {selectedAlert.properties.event}
