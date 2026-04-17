@@ -7,12 +7,23 @@ function renderLegend(
   props: Partial<{
     hiddenTiers: ReadonlySet<AlertTier>;
     onToggleTier: (tier: AlertTier) => void;
+    hiddenEvents: ReadonlySet<string>;
+    onToggleEvent: (event: string) => void;
   }> = {},
 ) {
   const onToggleTier = props.onToggleTier ?? vi.fn();
+  const onToggleEvent = props.onToggleEvent ?? vi.fn();
   const hiddenTiers = props.hiddenTiers ?? new Set<AlertTier>();
-  const utils = render(<MapLegend hiddenTiers={hiddenTiers} onToggleTier={onToggleTier} />);
-  return { ...utils, onToggleTier };
+  const hiddenEvents = props.hiddenEvents ?? new Set<string>();
+  const utils = render(
+    <MapLegend
+      hiddenTiers={hiddenTiers}
+      onToggleTier={onToggleTier}
+      hiddenEvents={hiddenEvents}
+      onToggleEvent={onToggleEvent}
+    />,
+  );
+  return { ...utils, onToggleTier, onToggleEvent };
 }
 
 describe('<MapLegend />', () => {
@@ -87,13 +98,53 @@ describe('<MapLegend />', () => {
     renderLegend({ hiddenTiers });
     fireEvent.click(screen.getByRole('button', { name: /^legend$/i }));
 
-    // The event-list row for "Tornado Warning" should pick up the dim styling
-    // because its tier is hidden. Lookup by the text node's parent <li>.
-    const row = screen.getByText('Tornado Warning').closest('li');
-    expect(row?.className).toMatch(/opacity-40/);
+    // Dim styling lives on the row's toggle button (the whole row is a
+    // button after the per-event toggle rework).
+    const row = screen.getByRole('button', { name: /toggle tornado warning on map/i });
+    expect(row.className).toMatch(/opacity-40/);
 
     // A Watch-tier row stays at full opacity.
-    const watchRow = screen.getByText('Tornado Watch').closest('li');
-    expect(watchRow?.className).toMatch(/opacity-100/);
+    const watchRow = screen.getByRole('button', { name: /toggle tornado watch on map/i });
+    expect(watchRow.className).toMatch(/opacity-100/);
+  });
+
+  it('each event row is a toggle button that reports its own visibility via aria-pressed', () => {
+    const hiddenEvents = new Set<string>(['Severe Thunderstorm Watch']);
+    renderLegend({ hiddenEvents });
+    fireEvent.click(screen.getByRole('button', { name: /^legend$/i }));
+
+    const hiddenRow = screen.getByRole('button', {
+      name: /toggle severe thunderstorm watch on map/i,
+    });
+    const visibleRow = screen.getByRole('button', { name: /toggle tornado warning on map/i });
+
+    // aria-pressed reflects event-level visibility only, not tier visibility —
+    // matches the button the user just clicked, so screen readers announce
+    // the toggle they actually touched.
+    expect(hiddenRow).toHaveAttribute('aria-pressed', 'false');
+    expect(visibleRow).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('clicking an event row invokes onToggleEvent with that event name', () => {
+    const { onToggleEvent } = renderLegend();
+    fireEvent.click(screen.getByRole('button', { name: /^legend$/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: /toggle tornado warning on map/i }));
+    fireEvent.click(screen.getByRole('button', { name: /toggle flash flood watch on map/i }));
+
+    expect(onToggleEvent).toHaveBeenNthCalledWith(1, 'Tornado Warning');
+    expect(onToggleEvent).toHaveBeenNthCalledWith(2, 'Flash Flood Watch');
+  });
+
+  it('a hidden event dims its row even when the tier is visible', () => {
+    // Independent dimensions: event-level hide should visually mark the row
+    // even if the containing tier is still on. Catches a regression where
+    // the dim class depended solely on tier state.
+    const hiddenEvents = new Set<string>(['Tornado Warning']);
+    renderLegend({ hiddenEvents });
+    fireEvent.click(screen.getByRole('button', { name: /^legend$/i }));
+
+    const row = screen.getByRole('button', { name: /toggle tornado warning on map/i });
+    expect(row.className).toMatch(/opacity-40/);
   });
 });

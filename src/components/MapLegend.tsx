@@ -80,9 +80,20 @@ const TIER_DESCRIPTIONS: ReadonlyArray<{ tier: AlertTier; color: string; label: 
 export interface MapLegendProps {
   hiddenTiers: ReadonlySet<AlertTier>;
   onToggleTier: (tier: AlertTier) => void;
+  // Per-event visibility — independent of tier toggles so users can e.g.
+  // hide "Tornado Watch" while keeping every other Watch on the map.
+  // Session-only in WeatherMap state; persistence is tracked in
+  // eclecti-build/seestorm-client issue for the legend-persistence follow-up.
+  hiddenEvents: ReadonlySet<string>;
+  onToggleEvent: (event: string) => void;
 }
 
-export default function MapLegend({ hiddenTiers, onToggleTier }: MapLegendProps) {
+export default function MapLegend({
+  hiddenTiers,
+  onToggleTier,
+  hiddenEvents,
+  onToggleEvent,
+}: MapLegendProps) {
   const [open, setOpen] = useState<boolean>(false);
 
   const entries = Object.entries(WARNING_COLORS);
@@ -111,21 +122,51 @@ export default function MapLegend({ hiddenTiers, onToggleTier }: MapLegendProps)
           <ul className="space-y-1.5">
             {entries.map(([event, color]) => {
               const tier = tierForEvent(event);
-              const dim = hiddenTiers.has(tier);
+              // Two independent reasons a row can be "off" on the map:
+              //   - its tier is hidden (bulk toggle below)
+              //   - the event itself is hidden (this row's button)
+              // We visually reflect either; aria-pressed reports the
+              // row-level state only, so the screen-reader announcement
+              // matches the button the user just clicked.
+              const tierHidden = hiddenTiers.has(tier);
+              const eventHidden = hiddenEvents.has(event);
+              const dim = tierHidden || eventHidden;
               return (
-                <li
-                  key={event}
-                  className={`flex items-center gap-2 transition-opacity ${
-                    dim ? 'opacity-40' : 'opacity-100'
-                  }`}
-                >
-                  <TierGlyph tier={tier} color={color} />
-                  <span
-                    aria-hidden="true"
-                    className="inline-block w-3 h-3 rounded-sm border border-white/20"
-                    style={{ backgroundColor: color }}
-                  />
-                  <span className={`text-gray-100 ${dim ? 'line-through' : ''}`}>{event}</span>
+                <li key={event}>
+                  <button
+                    type="button"
+                    onClick={() => onToggleEvent(event)}
+                    aria-pressed={!eventHidden}
+                    // Stable label across press state so screen readers see
+                    // one control, not a new one per press (WAI-ARIA APG
+                    // toggle-button pattern, same as the tier toggles below).
+                    aria-label={`Toggle ${event} on map`}
+                    className={`w-full flex items-center gap-2 rounded px-1 py-0.5 transition-opacity cursor-pointer hover:bg-gray-800 ${
+                      dim ? 'opacity-40' : 'opacity-100'
+                    }`}
+                  >
+                    <TierGlyph tier={tier} color={color} />
+                    <span
+                      aria-hidden="true"
+                      className="inline-block w-3 h-3 rounded-sm border border-white/20"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span
+                      className={`flex-1 text-left text-gray-100 ${
+                        eventHidden ? 'line-through' : ''
+                      }`}
+                    >
+                      {event}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      className={`text-[10px] uppercase tracking-wide ${
+                        eventHidden ? 'text-gray-500' : 'text-emerald-400'
+                      }`}
+                    >
+                      {eventHidden ? 'off' : 'on'}
+                    </span>
+                  </button>
                 </li>
               );
             })}

@@ -18,6 +18,7 @@ import {
 } from '@/lib/alerts';
 import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import { boostBasemapContrast } from '@/lib/mapContrast';
+import { alertLayerFilter } from '@/lib/alertFilter';
 import AlertsPanel from './AlertsPanel';
 import MapLegend from './MapLegend';
 
@@ -99,6 +100,20 @@ export default function WeatherMap() {
       const next = new Set(prev);
       if (next.has(tier)) next.delete(tier);
       else next.add(tier);
+      return next;
+    });
+  }, []);
+  // Per-event visibility, independent of tier toggles. Session-only (resets
+  // on reload) to keep this change small and avoid shipping a stale-cache
+  // failure mode on the public safety path. Persistence (localStorage,
+  // versioned key) is a planned follow-up — see the legend-persistence
+  // issue linked from FUTURE.md.
+  const [hiddenEvents, setHiddenEvents] = useState<Set<string>>(() => new Set());
+  const toggleEvent = useCallback((event: string) => {
+    setHiddenEvents((prev) => {
+      const next = new Set(prev);
+      if (next.has(event)) next.delete(event);
+      else next.add(event);
       return next;
     });
   }, []);
@@ -381,12 +396,20 @@ export default function WeatherMap() {
     ];
     for (const { tier, ids } of tierLayers) {
       const visibility = isForecast || hiddenTiers.has(tier) ? 'none' : 'visible';
+      // Recompute per-event filter whenever hiddenEvents changes. Layer
+      // `visibility` stays as the coarse tier/forecast gate; `filter`
+      // handles finer per-event exclusions. Keeping them on separate
+      // MapLibre mechanics means a single legend click only touches the
+      // dimension that actually changed.
+      const filter = alertLayerFilter(tier, hiddenEvents);
       for (const id of ids) {
-        if (m.getLayer(id)) m.setLayoutProperty(id, 'visibility', visibility);
+        if (!m.getLayer(id)) continue;
+        m.setLayoutProperty(id, 'visibility', visibility);
+        m.setFilter(id, filter);
       }
     }
     setMotionVisibility(m, !isForecast);
-  }, [mapReady, isForecast, hiddenTiers]);
+  }, [mapReady, isForecast, hiddenTiers, hiddenEvents]);
 
   // Map init.
   useEffect(() => {
@@ -536,26 +559,17 @@ export default function WeatherMap() {
 
       // Tier classification happens entirely inside MapLibre filters —
       // suffix-match the `event` string so new NWS event types are placed
-      // into the correct tier without any JS preprocessing.
+      // into the correct tier without any JS preprocessing. Filter math
+      // lives in `lib/alertFilter.ts` so it's unit-testable without a map.
       //   Warning  → ends with " Warning"  → bold, saturated fill (take shelter)
       //   Watch    → ends with " Watch"    → dashed outline, faint fill (be aware)
       //   Advisory → everything else       → thin outline, near-transparent fill (monitor)
-      const warningFilter: maplibregl.FilterSpecification = [
-        '==',
-        ['slice', ['get', 'event'], -8],
-        ' Warning',
-      ];
-      const watchFilter: maplibregl.FilterSpecification = [
-        '==',
-        ['slice', ['get', 'event'], -6],
-        ' Watch',
-      ];
-      // Fallback tier: whatever isn't a Warning or a Watch.
-      const advisoryFilter: maplibregl.FilterSpecification = [
-        'all',
-        ['!=', ['slice', ['get', 'event'], -8], ' Warning'],
-        ['!=', ['slice', ['get', 'event'], -6], ' Watch'],
-      ];
+      // The empty-set hiddenEvents here is intentional: on load nothing is
+      // hidden yet. The visibility useEffect re-applies the real filter
+      // once `hiddenEvents` changes.
+      const warningFilter = alertLayerFilter('Warning', new Set());
+      const watchFilter = alertLayerFilter('Watch', new Set());
+      const advisoryFilter = alertLayerFilter('Advisory', new Set());
 
       // Fills — opacity is the primary signal of urgency.
       m.addLayer({
@@ -846,7 +860,12 @@ export default function WeatherMap() {
 
       {/* Static legend — collapsed by default; explains polygon tiers + motion
           vector glyphs so new users can read the map without an onboarding. */}
-      <MapLegend hiddenTiers={hiddenTiers} onToggleTier={toggleTier} />
+      <MapLegend
+        hiddenTiers={hiddenTiers}
+        onToggleTier={toggleTier}
+        hiddenEvents={hiddenEvents}
+        onToggleEvent={toggleEvent}
+      />
 
       {/* Historical mode indicator — radar + alerts are NOT current */}
       {!isLive && !isForecast && (
