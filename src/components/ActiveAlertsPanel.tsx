@@ -20,10 +20,7 @@ interface ActiveAlertsPanelProps {
   now: number;
 }
 
-function sortByPriority(
-  alerts: ActiveAlert[],
-  priority: Record<string, number>,
-): ActiveAlert[] {
+function sortByPriority(alerts: ActiveAlert[], priority: Record<string, number>): ActiveAlert[] {
   // Unknown events sort to the bottom. Stable — identical priorities keep
   // their relative order from the ingest snapshot (which is already
   // newest-effective-first).
@@ -92,9 +89,7 @@ export default function ActiveAlertsPanel({
                     )}
                   </div>
                   {a.headline && (
-                    <div className="text-xs text-gray-200 mt-0.5 line-clamp-2">
-                      {a.headline}
-                    </div>
+                    <div className="text-xs text-gray-200 mt-0.5 line-clamp-2">{a.headline}</div>
                   )}
                   {a.area_desc && (
                     <div className="text-[11px] text-gray-400 mt-0.5 line-clamp-2">

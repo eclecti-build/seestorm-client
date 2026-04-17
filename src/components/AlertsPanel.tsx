@@ -63,10 +63,7 @@ function AlertCard({
           className="inline-block w-2.5 h-2.5 rounded-sm"
           style={{ backgroundColor: color }}
         />
-        <span
-          className="text-[11px] font-bold uppercase tracking-wide"
-          style={{ color }}
-        >
+        <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color }}>
           {alert.properties.event}
         </span>
         <span className="ml-auto text-[10px] text-gray-400">{tier}</span>
@@ -125,13 +122,7 @@ function FamilySection({
           const key = a.properties.nwsId ?? `${family}-${i}`;
           const selected = selectedId !== null && a.properties.nwsId === selectedId;
           return (
-            <AlertCard
-              key={key}
-              alert={a}
-              selected={selected}
-              onSelect={onSelect}
-              now={now}
-            />
+            <AlertCard key={key} alert={a} selected={selected} onSelect={onSelect} now={now} />
           );
         })}
       </div>

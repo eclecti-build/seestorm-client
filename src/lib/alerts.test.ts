@@ -96,9 +96,9 @@ describe('colorForEvent / priorityForEvent', () => {
 
 describe('resolveAlertUrl', () => {
   it('prefers an ingest-provided url over the fallback', () => {
-    expect(
-      resolveAlertUrl({ url: 'https://example.com/a', nws_id: 'KMKX.TO.W.0001' }),
-    ).toBe('https://example.com/a');
+    expect(resolveAlertUrl({ url: 'https://example.com/a', nws_id: 'KMKX.TO.W.0001' })).toBe(
+      'https://example.com/a',
+    );
   });
 
   it('builds the fallback from nws_id when url is missing', () => {
@@ -163,10 +163,7 @@ describe('buildAlertViews', () => {
       ]),
     );
     expect(out.mapFeatures.features.map((f) => f.properties.nwsId)).toEqual(['POLY']);
-    expect(out.listAlerts.map((a) => a.properties.nwsId).sort()).toEqual([
-      'COUNTY_WATCH',
-      'POLY',
-    ]);
+    expect(out.listAlerts.map((a) => a.properties.nwsId).sort()).toEqual(['COUNTY_WATCH', 'POLY']);
   });
 
   it('list sort is stable by priority (warnings first, then watches)', () => {

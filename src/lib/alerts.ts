@@ -85,9 +85,10 @@ export const FAMILY_ORDER: readonly AlertFamily[] = [
  *      weather.gov API endpoint — stable, no auth, always resolvable.
  *   3. null when neither is available (UI hides the link).
  */
-export function resolveAlertUrl(
-  params: { url?: string | null; nws_id?: string | null },
-): string | null {
+export function resolveAlertUrl(params: {
+  url?: string | null;
+  nws_id?: string | null;
+}): string | null {
   if (typeof params.url === 'string' && params.url.length > 0) return params.url;
   if (typeof params.nws_id === 'string' && params.nws_id.length > 0) {
     return `https://api.weather.gov/alerts/${encodeURIComponent(params.nws_id)}`;

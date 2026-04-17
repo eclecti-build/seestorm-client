@@ -60,15 +60,7 @@ function TierGlyph({ tier, color }: { tier: AlertTier; color: string }) {
 function MotionGlyph() {
   return (
     <svg width={40} height={12} aria-hidden="true">
-      <line
-        x1={0}
-        y1={6}
-        x2={30}
-        y2={6}
-        stroke="#ffffff"
-        strokeWidth={2}
-        strokeDasharray="3 2"
-      />
+      <line x1={0} y1={6} x2={30} y2={6} stroke="#ffffff" strokeWidth={2} strokeDasharray="3 2" />
       <polygon points="30,1 40,6 30,11" fill="#ffffff" />
     </svg>
   );

@@ -19,7 +19,9 @@ const STUB_GEOMETRY: GeoJSON.Geometry = {
 // FIXED_NOW is injected so "in Xm" strings are deterministic in tests.
 const FIXED_NOW = Date.parse('2026-04-17T20:00:00Z');
 
-function build(ingest: Partial<IngestAlert> & Pick<IngestAlert, 'event_type' | 'nws_id'>): WeatherAlert {
+function build(
+  ingest: Partial<IngestAlert> & Pick<IngestAlert, 'event_type' | 'nws_id'>,
+): WeatherAlert {
   return ingestToWeatherAlert({
     severity: 'Severe',
     headline: `${ingest.event_type} headline`,
