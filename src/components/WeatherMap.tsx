@@ -352,6 +352,70 @@ export default function WeatherMap() {
         },
       });
 
+      // Administrative boundaries — state + county lines.
+      //
+      // Rendered from bundled GeoJSON in /public/geo/ rather than inherited
+      // from the basemap style. This decouples boundary rendering from the
+      // basemap provider: CartoDB Dark Matter (current), Protomaps (future),
+      // or anything else we swap in will all still show boundaries.
+      //
+      // Sources start empty and are populated after fetch() below so the map
+      // doesn't block on init if the asset is slow.
+      m.addSource('admin-states', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      m.addSource('admin-counties', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      // County lines — drawn first (below state lines) so state borders win
+      // visually when they coincide with a county edge at a state boundary.
+      m.addLayer({
+        id: 'admin-counties-line',
+        type: 'line',
+        source: 'admin-counties',
+        paint: {
+          'line-color': '#6b7280',
+          'line-width': 0.6,
+          'line-opacity': 0.35,
+        },
+      });
+      m.addLayer({
+        id: 'admin-states-line',
+        type: 'line',
+        source: 'admin-states',
+        paint: {
+          'line-color': '#9ca3af',
+          'line-width': 1.2,
+          'line-opacity': 0.55,
+        },
+      });
+
+      // Populate boundary sources asynchronously. Failures here are
+      // non-critical — the map still works without boundary lines.
+      void (async () => {
+        try {
+          const [statesRes, countiesRes] = await Promise.all([
+            fetch('/geo/us-states.geojson'),
+            fetch('/geo/wi-counties.geojson'),
+          ]);
+          if (statesRes.ok) {
+            const states = (await statesRes.json()) as GeoJSON.FeatureCollection;
+            (m.getSource('admin-states') as maplibregl.GeoJSONSource | undefined)?.setData(states);
+          }
+          if (countiesRes.ok) {
+            const counties = (await countiesRes.json()) as GeoJSON.FeatureCollection;
+            (m.getSource('admin-counties') as maplibregl.GeoJSONSource | undefined)?.setData(
+              counties,
+            );
+          }
+        } catch (err) {
+          console.error('Failed to load admin boundaries:', err);
+        }
+      })();
+
       m.addSource('alerts', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
