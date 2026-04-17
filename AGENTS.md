@@ -9,8 +9,15 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Tests: Vitest + @testing-library/react + jsdom. Colocate `*.test.ts(x)` with source.
 
 ## Deploy
-- Cloudflare Pages native Git integration. No deploy workflow in this repo.
-- `main` auto-deploys; PRs get preview URLs. CI only gates quality.
+- Cloudflare Workers + Static Assets via CF native Git integration. Config in `wrangler.jsonc`.
+- `main` auto-deploys via `npx wrangler deploy`; PRs get preview URLs via `npx wrangler versions upload`.
+- CI only gates quality.
+
+## Worker proxy
+- `worker/index.ts` handles `/v1/*` routes (reads from private R2 bucket `seestorm-data` via `env.SNAPSHOTS` binding), falls through to static assets for everything else.
+- R2 bucket has NO public access — only this Worker reads, only ingest writes (API token).
+- Add new public snapshot keys to `PUBLIC_SNAPSHOTS` allowlist in `worker/index.ts`.
+- Worker has its own tsconfig at `worker/tsconfig.json`.
 
 ## Auth
 - **None.** Public data is public. No sign-in gates the map, alerts, or storm paths.

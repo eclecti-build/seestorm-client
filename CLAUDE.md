@@ -40,10 +40,16 @@ Non-profit severe weather visualization for Wisconsin communities.
 - **Vitest** + `@testing-library/react` + jsdom for tests
 
 ## Deploy
-- **Cloudflare Pages** via CF native Git integration. There is **no deploy workflow** in this repo.
-- Pushes to `main` auto-deploy to production.
-- PR branches automatically get preview URLs from Cloudflare.
-- CI in `.github/workflows/ci.yml` only gates quality (lint/typecheck/test/build); it does not deploy.
+- **Cloudflare Workers + Static Assets** via CF native Git integration (the unified successor to classic Pages). Config: `wrangler.jsonc` at repo root.
+- CF runs `npm run build` → `npx wrangler deploy` on every push to `main`. Preview branches get a versioned URL via `npx wrangler versions upload`.
+- CI in `.github/workflows/ci.yml` only gates quality (lint/typecheck/test/build); CF does the actual deploy.
+
+### Worker architecture
+- **Same deploy, two concerns.** This repo ships both the static Next.js export AND a Worker proxy in one bundle.
+- `worker/index.ts` is the Worker entry point. It handles `/v1/*` API routes and falls through to `env.ASSETS` for everything else (the Next static export in `out/`).
+- **R2 binding** — the Worker reads from the `seestorm-data` R2 bucket via an internal CF binding (`env.SNAPSHOTS`). The bucket has **no public access** — only this Worker (read) and the ingest service (write, via API token) can reach it.
+- Public API surface is versioned: `/v1/active-events.json` → `seestorm-data/active-events.json`. Add new snapshot keys to the `PUBLIC_SNAPSHOTS` allowlist in `worker/index.ts`.
+- Worker has its own tsconfig (`worker/tsconfig.json`) because it runs in the Workers runtime, not DOM/Node. `npm run typecheck` validates both.
 
 ## Auth
 **None.** SeeStorm's public viewing path is fully open — no sign-in required to view alerts, the map, radar, or storm paths. This is a product principle: public safety data must stay frictionless.

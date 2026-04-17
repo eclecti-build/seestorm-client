@@ -2,12 +2,26 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "seestorm-client",
   "compatibility_date": "2026-04-16",
-  // Static assets only — Next.js 16 static export outputs to ./out via `npm run build`.
-  // No Worker script (`main`) needed; this is purely CDN-served HTML/JS/CSS.
+  // Worker entry point — handles /v1/* API routes, falls through to static
+  // assets for everything else via env.ASSETS.fetch().
+  "main": "./worker/index.ts",
   "assets": {
     "directory": "./out",
+    // Expose the Next.js static export to the Worker as `env.ASSETS`.
+    "binding": "ASSETS",
     // Next generates out/404.html for unmatched routes — serve it with a real 404 status
     // (NOT single-page-application, which would rewrite deep links to index.html and break routing).
     "not_found_handling": "404-page"
+  },
+  // Private R2 bucket binding. Bucket has NO public access; only this Worker
+  // (via binding) and the ingest service (via write-scoped API token) reach it.
+  "r2_buckets": [
+    {
+      "binding": "SNAPSHOTS",
+      "bucket_name": "seestorm-data"
+    }
+  ],
+  "observability": {
+    "enabled": true
   }
 }
