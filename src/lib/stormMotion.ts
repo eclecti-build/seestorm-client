@@ -41,7 +41,15 @@ export const MOTION_LAYER_IDS = [
   'motion-origin',
   'motion-head',
   'motion-ticks',
+  'motion-label',
 ] as const;
+
+// Knots → mph conversion (1 kt = 1.15077945 mph). Exported for tests + UI.
+export const MPH_PER_KT = 1.15077945;
+
+export function ktToMph(kt: number): number {
+  return Math.round(kt * MPH_PER_KT);
+}
 
 // Minimal structural subset of the MapLibre Map API that `setMotionVisibility`
 // depends on — lets the helper stay unit-testable without pulling in maplibre-gl.
@@ -71,12 +79,15 @@ const KM_PER_NM = 1.852;
 const TICK_MINUTES: readonly [15, 30, 45] = [15, 30, 45];
 
 interface MotionFeatureProperties {
-  kind: 'origin' | 'line' | 'tick';
+  kind: 'origin' | 'line' | 'tick' | 'label';
   event: string;
   valid_at: string;
   nws_id: string;
   tick?: 15 | 30 | 45;
   bearing?: number;
+  speed_kt?: number;
+  speed_mph?: number;
+  label?: string;
 }
 
 /**
@@ -162,6 +173,26 @@ export function buildMotionFeatures(
         } satisfies MotionFeatureProperties,
       });
     }
+
+    // Speed label — single Point co-located with the 45-minute terminus. The
+    // map renders it as a text symbol with a dark halo so it reads against
+    // radar and basemap alike. mph is the unit the public understands;
+    // speed_kt is kept on the feature in case the UI surfaces it elsewhere.
+    const speed_mph = ktToMph(speed_kt);
+    features.push({
+      type: 'Feature',
+      geometry: terminus45.geometry,
+      properties: {
+        kind: 'label',
+        bearing: forwardBearing,
+        speed_kt,
+        speed_mph,
+        label: `${speed_mph} mph`,
+        event: alert.event_type,
+        valid_at,
+        nws_id: alert.nws_id,
+      } satisfies MotionFeatureProperties,
+    });
   }
 
   return { type: 'FeatureCollection', features };

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as turf from '@turf/turf';
 import {
   buildMotionFeatures,
+  ktToMph,
   MOTION_LAYER_IDS,
   setMotionVisibility,
   type LayerVisibilityMap,
@@ -60,26 +61,26 @@ describe('buildMotionFeatures', () => {
     expect(fc.features).toHaveLength(0);
   });
 
-  it('emits exactly 5 features for one alert with motion (origin + line + 3 ticks)', () => {
+  it('emits 6 features per motion alert (origin + line + 3 ticks + label)', () => {
     const fc = buildMotionFeatures([alert(baseMotion)]);
-    expect(fc.features).toHaveLength(5);
+    expect(fc.features).toHaveLength(6);
 
     const kinds = fc.features.map((f) => f.properties?.kind);
-    expect(kinds).toEqual(['origin', 'line', 'tick', 'tick', 'tick']);
+    expect(kinds).toEqual(['origin', 'line', 'tick', 'tick', 'tick', 'label']);
   });
 
-  it('emits 10 features for 2 motion-bearing alerts alongside 1 without', () => {
+  it('emits 12 features for 2 motion-bearing alerts alongside 1 without', () => {
     const fc = buildMotionFeatures([
       alert(baseMotion, { nws_id: 'A' }),
       alert(null, { nws_id: 'B' }),
       alert(baseMotion, { nws_id: 'C' }),
     ]);
-    expect(fc.features).toHaveLength(10);
-    // Order is preserved per-alert — first 5 belong to A, next 5 to C.
+    expect(fc.features).toHaveLength(12);
+    // Order is preserved per-alert — first 6 belong to A, next 6 to C.
     expect(fc.features[0].properties?.nws_id).toBe('A');
-    expect(fc.features[4].properties?.nws_id).toBe('A');
-    expect(fc.features[5].properties?.nws_id).toBe('C');
-    expect(fc.features[9].properties?.nws_id).toBe('C');
+    expect(fc.features[5].properties?.nws_id).toBe('A');
+    expect(fc.features[6].properties?.nws_id).toBe('C');
+    expect(fc.features[11].properties?.nws_id).toBe('C');
   });
 
   it('places origin Point exactly at [origin_lon, origin_lat] with no projection', () => {
@@ -200,7 +201,7 @@ describe('buildMotionFeatures', () => {
   it('handles a stationary storm (speed_kt=0) without throwing: terminus === origin', () => {
     const stationary: StormMotion = { ...baseMotion, speed_kt: 0 };
     const fc = buildMotionFeatures([alert(stationary)]);
-    expect(fc.features).toHaveLength(5);
+    expect(fc.features).toHaveLength(6);
 
     const origin = fc.features.find((f) => f.properties?.kind === 'origin');
     const line = fc.features.find((f) => f.properties?.kind === 'line');
@@ -237,21 +238,71 @@ describe('buildMotionFeatures', () => {
     expect(fc).toEqual({ type: 'FeatureCollection', features: [] });
   });
 
-  it('emits 5 features when both storm_motion and geometry are present', () => {
+  it('emits 6 features when both storm_motion and geometry are present', () => {
     const fc = buildMotionFeatures([alert(baseMotion, { geometry: STUB_GEOMETRY })]);
-    expect(fc.features).toHaveLength(5);
+    expect(fc.features).toHaveLength(6);
   });
 
-  it('mixed input (motion+geo, motion+null, no motion) emits only the first alert’s 5 features', () => {
+  it('mixed input (motion+geo, motion+null, no motion) emits only the first alert’s 6 features', () => {
     const fc = buildMotionFeatures([
       alert(baseMotion, { nws_id: 'A', geometry: STUB_GEOMETRY }),
       alert(baseMotion, { nws_id: 'B', geometry: null }),
       alert(null, { nws_id: 'C', geometry: STUB_GEOMETRY }),
     ]);
-    expect(fc.features).toHaveLength(5);
+    expect(fc.features).toHaveLength(6);
     for (const f of fc.features) {
       expect(f.properties?.nws_id).toBe('A');
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Speed label coverage — the label feature makes velocity legible on the map.
+  // ---------------------------------------------------------------------------
+
+  it('emits one label feature at the 45-min terminus with rounded mph', () => {
+    const fc = buildMotionFeatures([alert(baseMotion)]);
+    const line = fc.features.find((f) => f.properties?.kind === 'line');
+    const label = fc.features.find((f) => f.properties?.kind === 'label');
+
+    expect(label).toBeDefined();
+    expect(label?.geometry.type).toBe('Point');
+
+    const terminus = (line?.geometry as GeoJSON.LineString).coordinates[1];
+    const labelCoords = (label?.geometry as GeoJSON.Point).coordinates;
+    expect(labelCoords[0]).toBeCloseTo(terminus[0], 9);
+    expect(labelCoords[1]).toBeCloseTo(terminus[1], 9);
+
+    // 30 kt → 34.52 mph → 35 mph (Math.round).
+    expect(label?.properties?.speed_kt).toBe(30);
+    expect(label?.properties?.speed_mph).toBe(35);
+    expect(label?.properties?.label).toBe('35 mph');
+    expect(label?.properties?.bearing).toBe(90);
+  });
+
+  it('never emits a label for alerts without storm_motion', () => {
+    const fc = buildMotionFeatures([alert(null)]);
+    expect(fc.features.find((f) => f.properties?.kind === 'label')).toBeUndefined();
+  });
+
+  it('labels a stationary storm as "0 mph" at the origin', () => {
+    const stationary: StormMotion = { ...baseMotion, speed_kt: 0 };
+    const fc = buildMotionFeatures([alert(stationary)]);
+    const origin = fc.features.find((f) => f.properties?.kind === 'origin');
+    const label = fc.features.find((f) => f.properties?.kind === 'label');
+    const originCoords = (origin?.geometry as GeoJSON.Point).coordinates;
+    const labelCoords = (label?.geometry as GeoJSON.Point).coordinates;
+
+    expect(label?.properties?.label).toBe('0 mph');
+    expect(labelCoords).toEqual(originCoords);
+  });
+});
+
+describe('ktToMph', () => {
+  it('converts kt to mph with rounding', () => {
+    expect(ktToMph(0)).toBe(0);
+    expect(ktToMph(30)).toBe(35); // 30 * 1.15078 = 34.52 → 35
+    expect(ktToMph(50)).toBe(58); // 50 * 1.15078 = 57.54 → 58
+    expect(ktToMph(100)).toBe(115);
   });
 });
 
@@ -264,14 +315,15 @@ describe('buildMotionFeatures', () => {
 // -----------------------------------------------------------------------------
 
 describe('MOTION_LAYER_IDS', () => {
-  it('contains exactly 4 entries in a stable order', () => {
+  it('contains exactly 5 entries in a stable order (includes motion-label)', () => {
     expect(MOTION_LAYER_IDS).toEqual([
       'motion-line',
       'motion-origin',
       'motion-head',
       'motion-ticks',
+      'motion-label',
     ]);
-    expect(MOTION_LAYER_IDS).toHaveLength(4);
+    expect(MOTION_LAYER_IDS).toHaveLength(5);
   });
 });
 
