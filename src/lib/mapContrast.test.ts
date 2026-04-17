@@ -61,6 +61,32 @@ describe('boostBasemapContrast', () => {
     expect(setPaint).toHaveBeenCalledWith('road-expr', 'line-width', ['*', expr, 1.4]);
   });
 
+  it('skips the width boost when line-width is a legacy stops-function object', () => {
+    // CartoDB's bridge_trunk_fill / bridge_mot_fill layers ship line-width as
+    // `{ base, stops: [...] }`. Embedding that bare object inside an `['*', ...]`
+    // expression fails MapLibre validation with "Bare objects invalid". The
+    // boost should skip these layers rather than corrupt their paint value.
+    const stopsObject = {
+      base: 1.2,
+      stops: [
+        [6, 0.5],
+        [20, 30],
+      ],
+    };
+    const layers: StyleLayer[] = [
+      { id: 'bridge_trunk_fill', type: 'line', 'source-layer': 'bridge' },
+    ];
+    const { target, setPaint } = makeFakeMap(layers, {
+      'bridge_trunk_fill:line-width': stopsObject,
+    });
+
+    boostBasemapContrast(target);
+
+    expect(setPaint).toHaveBeenCalledWith('bridge_trunk_fill', 'line-opacity', 1);
+    const widthCalls = setPaint.mock.calls.filter((c) => c[1] === 'line-width');
+    expect(widthCalls).toHaveLength(0);
+  });
+
   it('leaves line-width alone when the current value is missing', () => {
     const layers: StyleLayer[] = [
       { id: 'bridge-no-width', type: 'line', 'source-layer': 'bridge' },

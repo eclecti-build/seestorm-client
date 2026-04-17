@@ -100,12 +100,18 @@ export function boostBasemapContrast(map: ContrastTarget): void {
 function boostRoadLine(map: ContrastTarget, layerId: string): void {
   map.setPaintProperty(layerId, 'line-opacity', 1);
 
-  // The existing `line-width` is usually a zoom-interpolated expression in
-  // CartoDB's style. Wrapping it with `['*', current, BOOST]` works whether
-  // the value is a scalar number or a nested MapLibre expression, so we don't
-  // have to special-case either.
+  // The existing `line-width` is usually a scalar or a zoom-interpolated
+  // expression array — wrapping either with `['*', current, BOOST]` is valid.
+  // CartoDB's bridge_* layers instead use the *legacy stops-function* syntax
+  // (a plain `{ base, stops }` object), which is only valid at the top of a
+  // paint value; embedding it inside an expression array triggers MapLibre's
+  // "Bare objects invalid. Use ['literal', {...}] instead." validation error.
+  // `['literal', ...]` wraps data, not numeric operands, so it doesn't rescue
+  // the multiply either. Skip the boost for those layers — they keep their
+  // original width, which is what the style author intended anyway.
   const width = map.getPaintProperty(layerId, 'line-width');
   if (width === undefined || width === null) return;
+  if (typeof width === 'object' && !Array.isArray(width)) return;
   map.setPaintProperty(layerId, 'line-width', ['*', width, ROAD_WIDTH_BOOST]);
 }
 
