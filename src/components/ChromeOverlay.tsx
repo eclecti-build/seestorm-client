@@ -18,13 +18,13 @@ export default function ChromeOverlay() {
       <Link
         href="/about"
         aria-label="About SeeStorm"
-        className="absolute bottom-[18px] left-3 z-10 inline-flex items-center gap-1.5 rounded-full border border-[var(--ss-border)] bg-[rgba(10,15,26,0.85)] px-2.5 py-1.5 text-xs text-[var(--ss-ink)] backdrop-blur-sm transition hover:bg-[rgba(10,15,26,0.95)]"
+        className="absolute bottom-[calc(18px+env(safe-area-inset-bottom))] left-[calc(0.75rem+env(safe-area-inset-left))] z-10 inline-flex items-center gap-1.5 rounded-full border border-[var(--ss-border)] bg-[rgba(10,15,26,0.85)] px-2.5 py-1.5 text-xs text-[var(--ss-ink)] backdrop-blur-sm transition hover:bg-[rgba(10,15,26,0.95)]"
       >
         <StormEyeMark className="h-3.5 w-3.5" />
         <span className="font-semibold tracking-tight">SeeStorm</span>
       </Link>
 
-      <div className="absolute bottom-[18px] right-3 z-10 flex flex-col items-end gap-1">
+      <div className="absolute bottom-[calc(18px+env(safe-area-inset-bottom))] right-[calc(0.75rem+env(safe-area-inset-right))] z-10 flex flex-col items-end gap-1">
         <a
           href="https://eclecti-build.com"
           target="_blank"

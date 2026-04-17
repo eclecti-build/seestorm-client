@@ -100,7 +100,7 @@ export default function MapLegend({
 
   return (
     <div
-      className="absolute bottom-28 left-4 bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 text-xs overflow-hidden max-w-[15rem]"
+      className="absolute bottom-[calc(7rem+env(safe-area-inset-bottom))] left-[calc(1rem+env(safe-area-inset-left))] bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 text-xs overflow-hidden max-w-[15rem]"
       role="region"
       aria-label="Map legend"
     >

@@ -177,7 +177,7 @@ export default function AlertsPanel({
   if (groups.length === 0) {
     return (
       <div
-        className="absolute top-16 left-4 w-80 max-w-[calc(100vw-2rem)] bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 p-3 text-sm"
+        className="absolute top-[calc(4rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] w-80 max-w-[calc(100vw-2rem)] bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 p-3 text-sm"
         role="region"
         aria-label="Active alerts"
       >
@@ -189,8 +189,8 @@ export default function AlertsPanel({
 
   return (
     <div
-      className={`absolute top-16 left-4 w-80 max-w-[calc(100vw-2rem)] bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 p-2 ${
-        isCollapsed ? '' : 'max-h-[60vh] overflow-y-auto space-y-2'
+      className={`absolute top-[calc(4rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] w-80 max-w-[calc(100vw-2rem)] bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 p-2 ${
+        isCollapsed ? '' : 'ss-alerts-maxh overflow-y-auto space-y-2'
       }`}
       role="region"
       aria-label="Active alerts"
