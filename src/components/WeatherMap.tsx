@@ -327,13 +327,20 @@ export default function WeatherMap() {
     activeRadar.current = incoming;
 
     // Alerts are observations of what IS happening; they have no meaning for
-    // future frames. Hide the alert fill/outline layers entirely in forecast
-    // mode so users can't confuse a model projection with an NWS warning.
+    // future frames. Hide the tiered alert layers entirely in forecast mode
+    // so users can't confuse a model projection with an NWS warning.
     const alertVisibility = isForecast ? 'none' : 'visible';
-    if (m.getLayer('alert-fills'))
-      m.setLayoutProperty('alert-fills', 'visibility', alertVisibility);
-    if (m.getLayer('alert-outlines'))
-      m.setLayoutProperty('alert-outlines', 'visibility', alertVisibility);
+    const alertLayerIds = [
+      'alert-fills-warning',
+      'alert-fills-watch',
+      'alert-fills-advisory',
+      'alert-outlines-warning',
+      'alert-outlines-watch',
+      'alert-outlines-advisory',
+    ];
+    for (const layerId of alertLayerIds) {
+      if (m.getLayer(layerId)) m.setLayoutProperty(layerId, 'visibility', alertVisibility);
+    }
   }, [mapReady, isLive, isForecast, forecastOffsetMin, sliderValue, history]);
 
   // Map init.
@@ -408,72 +415,119 @@ export default function WeatherMap() {
         data: { type: 'FeatureCollection', features: [] },
       });
 
+      // Per-event color expression — reused across all six tier layers below.
+      // Unknown event strings fall back to gray, matching the Advisory tone.
+      const eventColor: maplibregl.ExpressionSpecification = [
+        'match',
+        ['get', 'event'],
+        'Tornado Warning',
+        WARNING_COLORS['Tornado Warning'],
+        'Tornado Watch',
+        WARNING_COLORS['Tornado Watch'],
+        'Severe Thunderstorm Warning',
+        WARNING_COLORS['Severe Thunderstorm Warning'],
+        'Severe Thunderstorm Watch',
+        WARNING_COLORS['Severe Thunderstorm Watch'],
+        'Flash Flood Warning',
+        WARNING_COLORS['Flash Flood Warning'],
+        'Flash Flood Watch',
+        WARNING_COLORS['Flash Flood Watch'],
+        '#888888',
+      ];
+
+      // Tier classification happens entirely inside MapLibre filters —
+      // suffix-match the `event` string so new NWS event types are placed
+      // into the correct tier without any JS preprocessing.
+      //   Warning  → ends with " Warning"  → bold, saturated fill (take shelter)
+      //   Watch    → ends with " Watch"    → dashed outline, faint fill (be aware)
+      //   Advisory → everything else       → thin outline, near-transparent fill (monitor)
+      const warningFilter: maplibregl.FilterSpecification = [
+        '==',
+        ['slice', ['get', 'event'], -8],
+        ' Warning',
+      ];
+      const watchFilter: maplibregl.FilterSpecification = [
+        '==',
+        ['slice', ['get', 'event'], -6],
+        ' Watch',
+      ];
+      // Fallback tier: whatever isn't a Warning or a Watch.
+      const advisoryFilter: maplibregl.FilterSpecification = [
+        'all',
+        ['!=', ['slice', ['get', 'event'], -8], ' Warning'],
+        ['!=', ['slice', ['get', 'event'], -6], ' Watch'],
+      ];
+
+      // Fills — opacity is the primary signal of urgency.
       m.addLayer({
-        id: 'alert-fills',
+        id: 'alert-fills-warning',
         type: 'fill',
         source: 'alerts',
-        paint: {
-          'fill-color': [
-            'match',
-            ['get', 'event'],
-            'Tornado Warning',
-            WARNING_COLORS['Tornado Warning'],
-            'Tornado Watch',
-            WARNING_COLORS['Tornado Watch'],
-            'Severe Thunderstorm Warning',
-            WARNING_COLORS['Severe Thunderstorm Warning'],
-            'Severe Thunderstorm Watch',
-            WARNING_COLORS['Severe Thunderstorm Watch'],
-            'Flash Flood Warning',
-            WARNING_COLORS['Flash Flood Warning'],
-            'Flash Flood Watch',
-            WARNING_COLORS['Flash Flood Watch'],
-            '#888888',
-          ],
-          'fill-opacity': 0.25,
-        },
+        filter: warningFilter,
+        paint: { 'fill-color': eventColor, 'fill-opacity': 0.35 },
+      });
+      m.addLayer({
+        id: 'alert-fills-watch',
+        type: 'fill',
+        source: 'alerts',
+        filter: watchFilter,
+        paint: { 'fill-color': eventColor, 'fill-opacity': 0.12 },
+      });
+      m.addLayer({
+        id: 'alert-fills-advisory',
+        type: 'fill',
+        source: 'alerts',
+        filter: advisoryFilter,
+        paint: { 'fill-color': eventColor, 'fill-opacity': 0.06 },
       });
 
+      // Outlines — line weight + dash pattern reinforce the tier.
       m.addLayer({
-        id: 'alert-outlines',
+        id: 'alert-outlines-warning',
         type: 'line',
         source: 'alerts',
+        filter: warningFilter,
+        paint: { 'line-color': eventColor, 'line-width': 3, 'line-opacity': 0.9 },
+      });
+      m.addLayer({
+        id: 'alert-outlines-watch',
+        type: 'line',
+        source: 'alerts',
+        filter: watchFilter,
         paint: {
-          'line-color': [
-            'match',
-            ['get', 'event'],
-            'Tornado Warning',
-            WARNING_COLORS['Tornado Warning'],
-            'Tornado Watch',
-            WARNING_COLORS['Tornado Watch'],
-            'Severe Thunderstorm Warning',
-            WARNING_COLORS['Severe Thunderstorm Warning'],
-            'Severe Thunderstorm Watch',
-            WARNING_COLORS['Severe Thunderstorm Watch'],
-            'Flash Flood Warning',
-            WARNING_COLORS['Flash Flood Warning'],
-            'Flash Flood Watch',
-            WARNING_COLORS['Flash Flood Watch'],
-            '#888888',
-          ],
+          'line-color': eventColor,
           'line-width': 2,
-          'line-opacity': 0.8,
+          'line-opacity': 0.75,
+          'line-dasharray': [2, 2],
         },
       });
-
-      m.on('click', 'alert-fills', (e) => {
-        if (e.features && e.features[0]) {
-          setSelectedAlert(e.features[0] as unknown as WeatherAlert);
-        }
+      m.addLayer({
+        id: 'alert-outlines-advisory',
+        type: 'line',
+        source: 'alerts',
+        filter: advisoryFilter,
+        paint: { 'line-color': eventColor, 'line-width': 1.5, 'line-opacity': 0.6 },
       });
 
-      m.on('mouseenter', 'alert-fills', () => {
-        m.getCanvas().style.cursor = 'pointer';
-      });
-
-      m.on('mouseleave', 'alert-fills', () => {
-        m.getCanvas().style.cursor = '';
-      });
+      // Click / hover must fire for any tier — the popup is tier-agnostic.
+      const fillLayerIds = [
+        'alert-fills-warning',
+        'alert-fills-watch',
+        'alert-fills-advisory',
+      ] as const;
+      for (const layerId of fillLayerIds) {
+        m.on('click', layerId, (e) => {
+          if (e.features && e.features[0]) {
+            setSelectedAlert(e.features[0] as unknown as WeatherAlert);
+          }
+        });
+        m.on('mouseenter', layerId, () => {
+          m.getCanvas().style.cursor = 'pointer';
+        });
+        m.on('mouseleave', layerId, () => {
+          m.getCanvas().style.cursor = '';
+        });
+      }
 
       setMapReady(true);
     });
