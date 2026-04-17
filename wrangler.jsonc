@@ -11,17 +11,17 @@
     "binding": "ASSETS",
     // Next generates out/404.html for unmatched routes — serve it with a real 404 status
     // (NOT single-page-application, which would rewrite deep links to index.html and break routing).
-    "not_found_handling": "404-page"
+    "not_found_handling": "404-page",
   },
   // Private R2 bucket binding. Bucket has NO public access; only this Worker
   // (via binding) and the ingest service (via write-scoped API token) reach it.
   "r2_buckets": [
     {
       "binding": "SNAPSHOTS",
-      "bucket_name": "seestorm-data"
-    }
+      "bucket_name": "seestorm-data",
+    },
   ],
   "observability": {
-    "enabled": true
-  }
+    "enabled": true,
+  },
 }

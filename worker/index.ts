@@ -24,9 +24,7 @@ export interface Env {
  * Anything the ingest service publishes that should be *internal* stays
  * off this list — only whitelisted keys are reachable from the public URL.
  */
-const PUBLIC_SNAPSHOTS: ReadonlySet<string> = new Set([
-  'active-events.json',
-]);
+const PUBLIC_SNAPSHOTS: ReadonlySet<string> = new Set(['active-events.json']);
 
 /** Edge cache hint. Client polls every 10s so matching s-maxage keeps R2 cold. */
 const CACHE_CONTROL = 'public, max-age=10, s-maxage=10';
@@ -44,11 +42,7 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function handleApiRequest(
-  request: Request,
-  url: URL,
-  env: Env,
-): Promise<Response> {
+async function handleApiRequest(request: Request, url: URL, env: Env): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return methodNotAllowed();
   }
