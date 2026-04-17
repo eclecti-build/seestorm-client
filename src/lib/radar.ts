@@ -14,8 +14,20 @@ const LIVE_TILE_URL =
 
 const FIVE_MIN_MS = 5 * 60_000;
 
+// HRRR forecast reflectivity is emitted at 15-min increments up to 18h. The
+// `-0` suffix means "use the latest completed model run" so we don't have to
+// track run init times client-side. Horizon + step are exposed so the caller
+// can decide how far out to project.
+export const HRRR_STEP_MINUTES = 15;
+export const HRRR_HORIZON_MINUTES = 60;
+export const HRRR_FRAME_COUNT = HRRR_HORIZON_MINUTES / HRRR_STEP_MINUTES;
+
 function pad2(n: number): string {
   return n.toString().padStart(2, '0');
+}
+
+function pad4(n: number): string {
+  return n.toString().padStart(4, '0');
 }
 
 /**
@@ -35,4 +47,17 @@ export function radarTileUrl(at: Date | 'live'): string {
     pad2(snapped.getUTCMinutes());
 
   return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-${ts}/{z}/{x}/{y}.png`;
+}
+
+/**
+ * Returns the MapLibre tile URL template for HRRR model forecast reflectivity
+ * at `minutesAhead` minutes beyond the latest model run. HRRR emits frames at
+ * 15-min cadence; callers are expected to pass multiples of HRRR_STEP_MINUTES.
+ *
+ * This is a MODEL FORECAST, not an observation — surface that clearly to users.
+ */
+export function hrrrTileUrl(minutesAhead: number): string {
+  if (minutesAhead < 0) throw new Error('hrrrTileUrl: minutesAhead must be >= 0');
+  const snapped = Math.round(minutesAhead / HRRR_STEP_MINUTES) * HRRR_STEP_MINUTES;
+  return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/hrrr::REFD-F${pad4(snapped)}-0/{z}/{x}/{y}.png`;
 }

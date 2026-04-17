@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { radarTileUrl } from './radar';
+import { radarTileUrl, hrrrTileUrl, HRRR_FRAME_COUNT, HRRR_STEP_MINUTES } from './radar';
 
 describe('radarTileUrl', () => {
   it('returns the live composite layer URL when passed "live"', () => {
@@ -40,5 +40,31 @@ describe('radarTileUrl', () => {
     // A specific UTC instant always produces the same string.
     const t = new Date('2026-04-17T04:45:00Z');
     expect(radarTileUrl(t)).toContain('USCOMP-N0Q-202604170445');
+  });
+});
+
+describe('hrrrTileUrl', () => {
+  it('pads forecast minutes to 4 digits and targets the latest run', () => {
+    expect(hrrrTileUrl(60)).toBe(
+      'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/hrrr::REFD-F0060-0/{z}/{x}/{y}.png',
+    );
+    expect(hrrrTileUrl(15)).toContain('REFD-F0015-0');
+    expect(hrrrTileUrl(0)).toContain('REFD-F0000-0');
+  });
+
+  it('snaps arbitrary offsets to the 15-min HRRR cadence', () => {
+    expect(hrrrTileUrl(17)).toContain('REFD-F0015-0');
+    expect(hrrrTileUrl(23)).toContain('REFD-F0030-0');
+    expect(hrrrTileUrl(59)).toContain('REFD-F0060-0');
+  });
+
+  it('rejects negative offsets — the model does not run backwards', () => {
+    expect(() => hrrrTileUrl(-1)).toThrow();
+  });
+
+  it('exposes horizon / step constants that stay consistent', () => {
+    expect(HRRR_STEP_MINUTES).toBe(15);
+    expect(HRRR_FRAME_COUNT).toBeGreaterThan(0);
+    expect(HRRR_FRAME_COUNT * HRRR_STEP_MINUTES).toBeLessThanOrEqual(60);
   });
 });

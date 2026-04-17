@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { radarTileUrl } from '@/lib/radar';
+import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '@/lib/radar';
 
 // Warning color map by NWS event type
 const WARNING_COLORS: Record<string, string> = {
@@ -142,7 +142,14 @@ export default function WeatherMap() {
   // purity lint stays happy and re-renders only fire at the cadence we choose.
   const [now, setNow] = useState<number>(() => Date.now());
 
-  const isLive = history.length === 0 || sliderValue === history.length;
+  // Slider range is: 0 .. history.length-1 (historical)
+  //                  history.length (live)
+  //                  history.length+1 .. history.length+HRRR_FRAME_COUNT (forecast)
+  const sliderMax = history.length + HRRR_FRAME_COUNT;
+  const isForecast = sliderValue > history.length;
+  const isLive = !isForecast && (history.length === 0 || sliderValue === history.length);
+  // Minutes ahead of now for the current forecast frame (0 when not forecasting).
+  const forecastOffsetMin = isForecast ? (sliderValue - history.length) * HRRR_STEP_MINUTES : 0;
 
   // Paint a FeatureCollection onto the map's alerts source.
   const renderFeatures = useCallback((features: AlertsResponse) => {
@@ -237,9 +244,10 @@ export default function WeatherMap() {
     const frameMs = 500 / playSpeed;
     const id = setInterval(() => {
       setSliderValue((v) => {
-        // Wrap from last historical frame back to oldest; never enter live mode
-        // via playback — users click "Go to LIVE" explicitly for that.
-        if (v >= history.length - 1) return 0;
+        // Full loop: historical → live → forecast → wrap to oldest historical.
+        // This gives a continuous "past into future" animation the user can
+        // watch without touching anything.
+        if (v >= history.length + HRRR_FRAME_COUNT) return 0;
         return v + 1;
       });
     }, frameMs);
@@ -262,7 +270,7 @@ export default function WeatherMap() {
 
   const stepForward = useCallback(() => {
     setIsPlaying(false);
-    setSliderValue((v) => Math.min(history.length, v + 1));
+    setSliderValue((v) => Math.min(history.length + HRRR_FRAME_COUNT, v + 1));
   }, [history.length]);
 
   // Swap the radar tile source to match slider state. MapLibre does not reliably
@@ -274,12 +282,18 @@ export default function WeatherMap() {
     const m = map.current;
 
     let url: string;
-    if (isLive) {
+    let attribution: string;
+    if (isForecast) {
+      url = hrrrTileUrl(forecastOffsetMin);
+      attribution = 'HRRR model forecast via Iowa Environmental Mesonet';
+    } else if (isLive) {
       url = radarTileUrl('live');
+      attribution = 'NEXRAD via Iowa Environmental Mesonet';
     } else {
       const entry = history[sliderValue];
       if (!entry) return;
       url = radarTileUrl(new Date(entry.generated_at));
+      attribution = 'NEXRAD via Iowa Environmental Mesonet';
     }
 
     if (m.getLayer('radar-layer')) m.removeLayer('radar-layer');
@@ -289,7 +303,7 @@ export default function WeatherMap() {
       type: 'raster',
       tiles: [url],
       tileSize: 256,
-      attribution: 'NEXRAD via Iowa Environmental Mesonet',
+      attribution,
     });
     m.addLayer(
       {
@@ -300,7 +314,16 @@ export default function WeatherMap() {
       },
       'alert-fills',
     );
-  }, [mapReady, isLive, sliderValue, history]);
+
+    // Alerts are observations of what IS happening; they have no meaning for
+    // future frames. Hide the alert fill/outline layers entirely in forecast
+    // mode so users can't confuse a model projection with an NWS warning.
+    const alertVisibility = isForecast ? 'none' : 'visible';
+    if (m.getLayer('alert-fills'))
+      m.setLayoutProperty('alert-fills', 'visibility', alertVisibility);
+    if (m.getLayer('alert-outlines'))
+      m.setLayoutProperty('alert-outlines', 'visibility', alertVisibility);
+  }, [mapReady, isLive, isForecast, forecastOffsetMin, sliderValue, history]);
 
   // Map init.
   useEffect(() => {
@@ -438,7 +461,10 @@ export default function WeatherMap() {
   // Label describing what the user is currently viewing. Pure in `now` — the
   // component's ticking state — so React 19's purity lint is satisfied.
   let historicalLabel = 'Live';
-  if (!isLive) {
+  if (isForecast) {
+    const forecastDt = new Date(now + forecastOffsetMin * 60_000);
+    historicalLabel = `+${forecastOffsetMin}m · ${forecastDt.toLocaleTimeString()}`;
+  } else if (!isLive) {
     const entry = history[sliderValue];
     if (entry) {
       const dt = new Date(entry.generated_at);
@@ -460,13 +486,26 @@ export default function WeatherMap() {
       )}
 
       {/* Historical mode indicator — radar + alerts are NOT current */}
-      {!isLive && (
+      {!isLive && !isForecast && (
         <div
           className="absolute top-4 left-1/2 -translate-x-1/2 bg-amber-500 text-black px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide shadow-lg"
           role="status"
           aria-live="polite"
         >
           HISTORICAL · {historicalLabel}
+        </div>
+      )}
+
+      {/* Forecast indicator — this is a MODEL projection, not an observation.
+          Red-on-black with an explicit "MODEL FORECAST" qualifier so no one
+          mistakes HRRR output for an actual NWS warning or live radar return. */}
+      {isForecast && (
+        <div
+          className="absolute top-4 left-1/2 -translate-x-1/2 bg-black text-red-400 border border-red-500 px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide shadow-lg"
+          role="status"
+          aria-live="polite"
+        >
+          NOWCAST · MODEL FORECAST · {historicalLabel}
         </div>
       )}
 
@@ -524,14 +563,14 @@ export default function WeatherMap() {
                 <input
                   type="range"
                   min={0}
-                  max={history.length}
+                  max={sliderMax}
                   value={sliderValue}
                   onChange={(e) => {
                     setIsPlaying(false);
                     setSliderValue(Number(e.target.value));
                   }}
                   className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700 accent-red-500"
-                  aria-label="Scrub through snapshot history"
+                  aria-label="Scrub through history, live, and forecast"
                 />
 
                 <div className="text-xs text-gray-300 font-mono shrink-0 w-44 text-right">
@@ -544,7 +583,7 @@ export default function WeatherMap() {
               <div className="flex items-center gap-2 text-xs">
                 <button
                   onClick={stepBack}
-                  disabled={isLive || sliderValue === 0}
+                  disabled={sliderValue === 0}
                   className="px-2 py-1 rounded bg-gray-800 text-gray-200 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
                   aria-label="Step back one frame"
                   title="Step back"
@@ -562,7 +601,7 @@ export default function WeatherMap() {
                 </button>
                 <button
                   onClick={stepForward}
-                  disabled={sliderValue >= history.length}
+                  disabled={sliderValue >= sliderMax}
                   className="px-2 py-1 rounded bg-gray-800 text-gray-200 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
                   aria-label="Step forward one frame"
                   title="Step forward"
@@ -593,7 +632,7 @@ export default function WeatherMap() {
                 </div>
 
                 <div className="ml-auto font-mono text-gray-400">
-                  Frame {isLive ? history.length : sliderValue + 1}/{history.length}
+                  Frame {sliderValue + 1}/{sliderMax + 1}
                 </div>
               </div>
             </>
