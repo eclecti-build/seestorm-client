@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://seestorm.pages.dev'),
+  metadataBase: new URL('https://seestorm.org'),
   applicationName: 'SeeStorm',
   title: {
     default: 'SeeStorm — Wisconsin Severe Weather',
