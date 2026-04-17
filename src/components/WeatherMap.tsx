@@ -27,7 +27,7 @@ const DEFAULT_ZOOM = 7;
 
 // Radar animation tuning. These values balance responsiveness (slider feels
 // immediate) against smoothness (no visible popping during playback).
-const RADAR_OPACITY = 0.6;
+const RADAR_OPACITY = 0.5;
 const CROSSFADE_MS = 300; // A↔B layer opacity crossfade
 const TILE_FADE_MS = 400; // MapLibre built-in in-tile fade
 
@@ -478,34 +478,6 @@ export default function WeatherMap() {
         data: { type: 'FeatureCollection', features: [] },
       });
 
-      // County lines — drawn first (below state lines) so state borders win
-      // visually when they coincide with a county edge at a state boundary.
-      m.addLayer({
-        id: 'admin-counties-line',
-        type: 'line',
-        source: 'admin-counties',
-        paint: {
-          // Lightened from #6b7280 / 0.6 / 0.35 — with radar + alert fills
-          // stacked on top, the old values washed out at typical zooms.
-          'line-color': '#9ca3af',
-          'line-width': 1,
-          'line-opacity': 0.6,
-        },
-      });
-      m.addLayer({
-        id: 'admin-states-line',
-        type: 'line',
-        source: 'admin-states',
-        paint: {
-          // Bumped from #9ca3af / 1.2 / 0.55. State borders are the highest-
-          // value geographic reference when a storm crosses WI/MN/IL lines,
-          // so we want them unambiguously readable through the overlays.
-          'line-color': '#e5e7eb',
-          'line-width': 1.8,
-          'line-opacity': 0.8,
-        },
-      });
-
       // Populate boundary sources asynchronously. Failures here are
       // non-critical — the map still works without boundary lines.
       void (async () => {
@@ -591,21 +563,49 @@ export default function WeatherMap() {
         type: 'fill',
         source: 'alerts',
         filter: warningFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.2 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': 0.15 },
       });
       m.addLayer({
         id: 'alert-fills-watch',
         type: 'fill',
         source: 'alerts',
         filter: watchFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.12 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': 0.09 },
       });
       m.addLayer({
         id: 'alert-fills-advisory',
         type: 'fill',
         source: 'alerts',
         filter: advisoryFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.06 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': 0.04 },
+      });
+
+      // County lines — drawn first (below state lines) so state borders win
+      // visually when they coincide with a county edge at a state boundary.
+      m.addLayer({
+        id: 'admin-counties-line',
+        type: 'line',
+        source: 'admin-counties',
+        paint: {
+          // Lightened from #6b7280 / 0.6 / 0.35 — with radar + alert fills
+          // stacked on top, the old values washed out at typical zooms.
+          'line-color': '#9ca3af',
+          'line-width': 1,
+          'line-opacity': 0.6,
+        },
+      });
+      m.addLayer({
+        id: 'admin-states-line',
+        type: 'line',
+        source: 'admin-states',
+        paint: {
+          // Bumped from #9ca3af / 1.2 / 0.55. State borders are the highest-
+          // value geographic reference when a storm crosses WI/MN/IL lines,
+          // so we want them unambiguously readable through the overlays.
+          'line-color': '#e5e7eb',
+          'line-width': 1.8,
+          'line-opacity': 0.8,
+        },
       });
 
       // Outlines — line weight + dash pattern reinforce the tier.
@@ -744,10 +744,21 @@ export default function WeatherMap() {
         filter: ['==', ['get', 'kind'], 'label'],
         layout: {
           'text-field': ['get', 'label'],
-          'text-size': 11,
-          'text-offset': [0.8, -0.8],
-          'text-anchor': 'bottom-left',
-          'text-allow-overlap': true,
+          'text-size': 12,
+          'text-allow-overlap': false,
+          'text-variable-anchor': [
+            'top',
+            'bottom',
+            'left',
+            'right',
+            'top-right',
+            'top-left',
+            'bottom-right',
+            'bottom-left',
+          ],
+          'text-radial-offset': 1.2,
+          'text-justify': 'auto',
+          'text-padding': 8,
           'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
         },
         paint: {
