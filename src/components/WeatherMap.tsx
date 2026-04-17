@@ -4,11 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '@/lib/radar';
-import {
-  buildMotionFeatures,
-  setMotionVisibility,
-  type StormMotion,
-} from '@/lib/stormMotion';
+import { buildMotionFeatures, setMotionVisibility, type StormMotion } from '@/lib/stormMotion';
 
 // Warning color map by NWS event type
 const WARNING_COLORS: Record<string, string> = {

@@ -265,7 +265,12 @@ describe('buildMotionFeatures', () => {
 
 describe('MOTION_LAYER_IDS', () => {
   it('contains exactly 4 entries in a stable order', () => {
-    expect(MOTION_LAYER_IDS).toEqual(['motion-line', 'motion-origin', 'motion-head', 'motion-ticks']);
+    expect(MOTION_LAYER_IDS).toEqual([
+      'motion-line',
+      'motion-origin',
+      'motion-head',
+      'motion-ticks',
+    ]);
     expect(MOTION_LAYER_IDS).toHaveLength(4);
   });
 });
