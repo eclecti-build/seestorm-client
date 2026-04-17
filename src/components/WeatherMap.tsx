@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '@/lib/radar';
+import { buildMotionFeatures, type StormMotion } from '@/lib/stormMotion';
 
 // Warning color map by NWS event type
 const WARNING_COLORS: Record<string, string> = {
@@ -74,6 +75,10 @@ interface IngestAlert {
   geometry: GeoJSON.Geometry | null;
   effective_at: string;
   expires_at: string;
+  // Optional — only populated for storm-based warnings that carry a parseable
+  // `TIME...MOT...LOC` block. Absent for watches, advisories, and county-wide
+  // products that have no tracked cell. Rendered on a separate motion source.
+  storm_motion?: StormMotion | null;
 }
 
 interface IngestSnapshot {
@@ -168,6 +173,15 @@ export default function WeatherMap() {
     );
   }, []);
 
+  // Paint storm-motion features (origin / projected line / tick marks) onto
+  // the separate `alert-motion` source. Kept off the main alerts source so
+  // the polygon rendering path is untouched when an alert carries motion.
+  const renderMotion = useCallback((ingestAlerts: IngestAlert[]) => {
+    if (!map.current?.getSource('alert-motion')) return;
+    const fc = buildMotionFeatures(ingestAlerts);
+    (map.current.getSource('alert-motion') as maplibregl.GeoJSONSource).setData(fc);
+  }, []);
+
   // Fetch the live snapshot (/v1/active-events.json) — used when sliderValue is live.
   const fetchLive = useCallback(async () => {
     try {
@@ -178,10 +192,11 @@ export default function WeatherMap() {
       setAlerts(features);
       setSnapshotTime(new Date(snapshot.generated_at));
       renderFeatures(features);
+      renderMotion(snapshot.alerts);
     } catch (err) {
       console.error('Failed to fetch live snapshot:', err);
     }
-  }, [renderFeatures]);
+  }, [renderFeatures, renderMotion]);
 
   // Fetch one historical snapshot by timestamp key.
   const fetchHistorical = useCallback(
@@ -194,11 +209,12 @@ export default function WeatherMap() {
         setAlerts(features);
         setSnapshotTime(new Date(snapshot.generated_at));
         renderFeatures(features);
+        renderMotion(snapshot.alerts);
       } catch (err) {
         console.error('Failed to fetch historical snapshot:', err);
       }
     },
-    [renderFeatures],
+    [renderFeatures, renderMotion],
   );
 
   // Fetch the history index from the Worker.
@@ -337,6 +353,13 @@ export default function WeatherMap() {
       'alert-outlines-warning',
       'alert-outlines-watch',
       'alert-outlines-advisory',
+      // Motion layers follow the same gating — a motion vector is an
+      // observation of a storm's current velocity, which has no meaning
+      // when the user has scrubbed into a model forecast frame.
+      'motion-line',
+      'motion-origin',
+      'motion-ticks',
+      'motion-head',
     ];
     for (const layerId of alertLayerIds) {
       if (m.getLayer(layerId)) m.setLayoutProperty(layerId, 'visibility', alertVisibility);
@@ -507,6 +530,102 @@ export default function WeatherMap() {
         source: 'alerts',
         filter: advisoryFilter,
         paint: { 'line-color': eventColor, 'line-width': 1.5, 'line-opacity': 0.6 },
+      });
+
+      // ---------------------------------------------------------------------
+      // Storm motion layers
+      // ---------------------------------------------------------------------
+      //
+      // Motion features live on a *separate* source from the alert polygons so
+      // the polygon click / hover behavior stays untouched. The source is fed
+      // by `renderMotion()`, which runs whenever we fetch a snapshot.
+      //
+      // Arrow icon is built at runtime on a 32×32 canvas and registered as an
+      // SDF image so `icon-color` can tint it per-event — avoids shipping a
+      // PNG asset and keeps the arrow in sync with the warning palette.
+      m.addSource('alert-motion', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      const arrowSize = 32;
+      const arrowCanvas = document.createElement('canvas');
+      arrowCanvas.width = arrowSize;
+      arrowCanvas.height = arrowSize;
+      const arrowCtx = arrowCanvas.getContext('2d');
+      if (arrowCtx && !m.hasImage('motion-arrow')) {
+        arrowCtx.fillStyle = '#ffffff';
+        arrowCtx.beginPath();
+        // Triangle points UP (north in MapLibre's rotation convention).
+        // icon-rotate with rotation-alignment:'map' then spins it to match the
+        // forward bearing stored on each tick feature.
+        arrowCtx.moveTo(arrowSize / 2, 2);
+        arrowCtx.lineTo(arrowSize - 4, arrowSize - 4);
+        arrowCtx.lineTo(4, arrowSize - 4);
+        arrowCtx.closePath();
+        arrowCtx.fill();
+        const imageData = arrowCtx.getImageData(0, 0, arrowSize, arrowSize);
+        m.addImage('motion-arrow', imageData, { sdf: true });
+      }
+
+      // Dashed forward-projected line out to the 45-minute mark.
+      m.addLayer({
+        id: 'motion-line',
+        type: 'line',
+        source: 'alert-motion',
+        filter: ['==', ['get', 'kind'], 'line'],
+        paint: {
+          'line-color': eventColor,
+          'line-width': 2,
+          'line-opacity': 0.9,
+          'line-dasharray': [1, 1],
+        },
+      });
+
+      // Origin dot — where the radar sees the storm cell right now.
+      m.addLayer({
+        id: 'motion-origin',
+        type: 'circle',
+        source: 'alert-motion',
+        filter: ['==', ['get', 'kind'], 'origin'],
+        paint: {
+          'circle-radius': 5,
+          'circle-color': eventColor,
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+
+      // 15 and 30-minute tick circles (45-min slot is the arrowhead instead).
+      m.addLayer({
+        id: 'motion-ticks',
+        type: 'circle',
+        source: 'alert-motion',
+        filter: ['all', ['==', ['get', 'kind'], 'tick'], ['!=', ['get', 'tick'], 45]],
+        paint: {
+          'circle-radius': 3,
+          'circle-color': eventColor,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+
+      // Arrowhead at the 45-min terminus, rotated by forward bearing.
+      m.addLayer({
+        id: 'motion-head',
+        type: 'symbol',
+        source: 'alert-motion',
+        filter: ['all', ['==', ['get', 'kind'], 'tick'], ['==', ['get', 'tick'], 45]],
+        layout: {
+          'icon-image': 'motion-arrow',
+          'icon-rotate': ['get', 'bearing'],
+          'icon-rotation-alignment': 'map',
+          'icon-size': 0.5,
+          'icon-allow-overlap': true,
+        },
+        paint: {
+          'icon-color': eventColor,
+        },
       });
 
       // Click / hover must fire for any tier — the popup is tier-agnostic.
