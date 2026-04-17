@@ -44,3 +44,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude Code local state
+.claude/
+
+# Codex review artifacts
+.codex-review/
