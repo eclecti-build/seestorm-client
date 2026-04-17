@@ -11,7 +11,10 @@
     "test:watch": "vitest",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler deploy",
+    "deploy:preview": "wrangler versions upload",
+    "cf:dev": "wrangler dev"
   },
   "dependencies": {
     "@turf/turf": "^7.3.4",
@@ -36,6 +39,7 @@
     "prettier": "^3.8.3",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.83.0"
   }
 }

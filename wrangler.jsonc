@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "seestorm-client",
+  "compatibility_date": "2026-04-16",
+  // Static assets only — Next.js 16 static export outputs to ./out via `npm run build`.
+  // No Worker script (`main`) needed; this is purely CDN-served HTML/JS/CSS.
+  "assets": {
+    "directory": "./out",
+    // Next generates out/404.html for unmatched routes — serve it with a real 404 status
+    // (NOT single-page-application, which would rewrite deep links to index.html and break routing).
+    "not_found_handling": "404-page"
+  }
+}
