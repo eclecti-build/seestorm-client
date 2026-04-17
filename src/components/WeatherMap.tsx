@@ -133,6 +133,10 @@ export default function WeatherMap() {
   // 0..history.length-1 means "historical" — show snapshot at that index.
   const [sliderValue, setSliderValue] = useState<number>(0);
   const [mapReady, setMapReady] = useState<boolean>(false);
+  // Playback state for the time-lapse loop. Pressing play from live rewinds to
+  // the oldest frame; reaching the end wraps to 0 (radar-loop convention).
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [playSpeed, setPlaySpeed] = useState<1 | 2 | 4>(1);
   // `now` is a ticking reference time used only for rendering "Xm ago" labels.
   // Kept in state (not read directly via Date.now() in render) so React 19's
   // purity lint stays happy and re-renders only fire at the cadence we choose.
@@ -225,6 +229,41 @@ export default function WeatherMap() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; setState post-await
     if (entry) void fetchHistorical(entry.ts);
   }, [mapReady, isLive, sliderValue, history, fetchHistorical]);
+
+  // Auto-advance the slider when playing. 500ms per frame at 1x — fast enough
+  // that motion is obvious, slow enough that each 5-min tile has time to load.
+  useEffect(() => {
+    if (!isPlaying || history.length === 0) return;
+    const frameMs = 500 / playSpeed;
+    const id = setInterval(() => {
+      setSliderValue((v) => {
+        // Wrap from last historical frame back to oldest; never enter live mode
+        // via playback — users click "Go to LIVE" explicitly for that.
+        if (v >= history.length - 1) return 0;
+        return v + 1;
+      });
+    }, frameMs);
+    return () => clearInterval(id);
+  }, [isPlaying, playSpeed, history.length]);
+
+  const togglePlay = useCallback(() => {
+    setIsPlaying((p) => {
+      // Starting playback from live → rewind to the oldest frame so there's
+      // something visible to play. Otherwise toggle in place.
+      if (!p && isLive && history.length > 0) setSliderValue(0);
+      return !p;
+    });
+  }, [isLive, history.length]);
+
+  const stepBack = useCallback(() => {
+    setIsPlaying(false);
+    setSliderValue((v) => Math.max(0, v - 1));
+  }, []);
+
+  const stepForward = useCallback(() => {
+    setIsPlaying(false);
+    setSliderValue((v) => Math.min(history.length, v + 1));
+  }, [history.length]);
 
   // Swap the radar tile source to match slider state. MapLibre does not reliably
   // update a raster source's `tiles` URL in place — the stock pattern is to
@@ -464,34 +503,100 @@ export default function WeatherMap() {
       <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/60 to-transparent p-4 pb-5 pointer-events-none">
         <div className="max-w-4xl mx-auto space-y-2 pointer-events-auto">
           {history.length > 0 && (
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setSliderValue(history.length)}
-                disabled={isLive}
-                className={`text-xs font-semibold px-2 py-1 rounded shrink-0 transition-colors ${
-                  isLive
-                    ? 'bg-red-600 text-white cursor-default'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer'
-                }`}
-                aria-label="Return to live"
-              >
-                {isLive ? '● LIVE' : 'Go to LIVE'}
-              </button>
+            <>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    setIsPlaying(false);
+                    setSliderValue(history.length);
+                  }}
+                  disabled={isLive}
+                  className={`text-xs font-semibold px-2 py-1 rounded shrink-0 transition-colors ${
+                    isLive
+                      ? 'bg-red-600 text-white cursor-default'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer'
+                  }`}
+                  aria-label="Return to live"
+                >
+                  {isLive ? '● LIVE' : 'Go to LIVE'}
+                </button>
 
-              <input
-                type="range"
-                min={0}
-                max={history.length}
-                value={sliderValue}
-                onChange={(e) => setSliderValue(Number(e.target.value))}
-                className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700 accent-red-500"
-                aria-label="Scrub through snapshot history"
-              />
+                <input
+                  type="range"
+                  min={0}
+                  max={history.length}
+                  value={sliderValue}
+                  onChange={(e) => {
+                    setIsPlaying(false);
+                    setSliderValue(Number(e.target.value));
+                  }}
+                  className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700 accent-red-500"
+                  aria-label="Scrub through snapshot history"
+                />
 
-              <div className="text-xs text-gray-300 font-mono shrink-0 w-44 text-right">
-                {historicalLabel}
+                <div className="text-xs text-gray-300 font-mono shrink-0 w-44 text-right">
+                  {historicalLabel}
+                </div>
               </div>
-            </div>
+
+              {/* Playback row — step / play / speed, plus a frame counter so
+                  it's obvious each tick advances even when the scene is calm. */}
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  onClick={stepBack}
+                  disabled={isLive || sliderValue === 0}
+                  className="px-2 py-1 rounded bg-gray-800 text-gray-200 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Step back one frame"
+                  title="Step back"
+                >
+                  ⏮
+                </button>
+                <button
+                  onClick={togglePlay}
+                  disabled={history.length < 2}
+                  className="px-2 py-1 rounded bg-gray-800 text-gray-200 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed w-8 text-center"
+                  aria-label={isPlaying ? 'Pause playback' : 'Play time-lapse'}
+                  title={isPlaying ? 'Pause' : 'Play'}
+                >
+                  {isPlaying ? '⏸' : '▶'}
+                </button>
+                <button
+                  onClick={stepForward}
+                  disabled={sliderValue >= history.length}
+                  className="px-2 py-1 rounded bg-gray-800 text-gray-200 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Step forward one frame"
+                  title="Step forward"
+                >
+                  ⏭
+                </button>
+
+                <div
+                  className="flex items-center gap-1 ml-2"
+                  role="radiogroup"
+                  aria-label="Playback speed"
+                >
+                  {([1, 2, 4] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setPlaySpeed(s)}
+                      role="radio"
+                      aria-checked={playSpeed === s}
+                      className={`px-1.5 py-0.5 rounded font-mono ${
+                        playSpeed === s
+                          ? 'bg-red-600 text-white'
+                          : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                      }`}
+                    >
+                      {s}×
+                    </button>
+                  ))}
+                </div>
+
+                <div className="ml-auto font-mono text-gray-400">
+                  Frame {isLive ? history.length : sliderValue + 1}/{history.length}
+                </div>
+              </div>
+            </>
           )}
 
           <div className="flex items-center justify-between text-[11px] text-gray-400">
