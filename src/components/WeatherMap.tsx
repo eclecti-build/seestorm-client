@@ -485,7 +485,7 @@ export default function WeatherMap() {
         type: 'fill',
         source: 'alerts',
         filter: warningFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.35 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': 0.2 },
       });
       m.addLayer({
         id: 'alert-fills-watch',
