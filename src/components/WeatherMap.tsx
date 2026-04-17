@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { radarTileUrl } from '@/lib/radar';
 
 // Warning color map by NWS event type
 const WARNING_COLORS: Record<string, string> = {
@@ -225,6 +226,43 @@ export default function WeatherMap() {
     if (entry) void fetchHistorical(entry.ts);
   }, [mapReady, isLive, sliderValue, history, fetchHistorical]);
 
+  // Swap the radar tile source to match slider state. MapLibre does not reliably
+  // update a raster source's `tiles` URL in place — the stock pattern is to
+  // remove the layer + source and re-create them. We keep the new radar layer
+  // below `alert-fills` so alert polygons stay on top.
+  useEffect(() => {
+    if (!mapReady || !map.current) return;
+    const m = map.current;
+
+    let url: string;
+    if (isLive) {
+      url = radarTileUrl('live');
+    } else {
+      const entry = history[sliderValue];
+      if (!entry) return;
+      url = radarTileUrl(new Date(entry.generated_at));
+    }
+
+    if (m.getLayer('radar-layer')) m.removeLayer('radar-layer');
+    if (m.getSource('radar')) m.removeSource('radar');
+
+    m.addSource('radar', {
+      type: 'raster',
+      tiles: [url],
+      tileSize: 256,
+      attribution: 'NEXRAD via Iowa Environmental Mesonet',
+    });
+    m.addLayer(
+      {
+        id: 'radar-layer',
+        type: 'raster',
+        source: 'radar',
+        paint: { 'raster-opacity': 0.6 },
+      },
+      'alert-fills',
+    );
+  }, [mapReady, isLive, sliderValue, history]);
+
   // Map init.
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -256,9 +294,7 @@ export default function WeatherMap() {
     m.on('load', () => {
       m.addSource('radar', {
         type: 'raster',
-        tiles: [
-          'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
-        ],
+        tiles: [radarTileUrl('live')],
         tileSize: 256,
         attribution: 'NEXRAD via Iowa Environmental Mesonet',
       });
@@ -381,6 +417,17 @@ export default function WeatherMap() {
         <div className="absolute top-4 left-4 bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-lg">
           {alerts.features.length} active alert
           {alerts.features.length !== 1 ? 's' : ''}
+        </div>
+      )}
+
+      {/* Historical mode indicator — radar + alerts are NOT current */}
+      {!isLive && (
+        <div
+          className="absolute top-4 left-1/2 -translate-x-1/2 bg-amber-500 text-black px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide shadow-lg"
+          role="status"
+          aria-live="polite"
+        >
+          HISTORICAL · {historicalLabel}
         </div>
       )}
 
