@@ -321,6 +321,14 @@ export function buildAlertViews(
 ): {
   mapFeatures: AlertsResponse;
   listAlerts: WeatherAlert[];
+  /**
+   * The filtered raw `IngestAlert[]` (same userState scoping applied to
+   * `mapFeatures`/`listAlerts`). Exposed so callers that need the original
+   * shape — e.g. the storm-motion arrow renderer — can apply the same
+   * filter without reproducing the predicate. If the snapshot is rendered
+   * unfiltered (no `userState`), this is identical to `snapshot.alerts`.
+   */
+  motionAlerts: IngestAlert[];
 } {
   const { countyLookup, userState, allowedStates } = options;
   // Choose state filter for area_desc parsing. If the caller didn't pass one,
@@ -352,6 +360,7 @@ export function buildAlertViews(
   return {
     mapFeatures: { type: 'FeatureCollection', features: mapAlerts },
     listAlerts: allAlerts,
+    motionAlerts: filteredIngest,
   };
 }
 

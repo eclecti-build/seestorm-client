@@ -30,7 +30,7 @@ function isZipRecord(v: unknown): v is ZipRecord {
 
 async function loadTable(): Promise<ZipTable> {
   if (!tablePromise) {
-    tablePromise = (async () => {
+    const inflight = (async () => {
       // fetch() the static asset rather than a Webpack/Turbopack `import` of
       // the JSON — keeps the file out of the JS bundle entirely (it lives in
       // `public/data/`) and lets the browser/CDN cache it independently.
@@ -48,6 +48,13 @@ async function loadTable(): Promise<ZipTable> {
       }
       return out;
     })();
+    // If the fetch fails, drop the cached promise so the next call retries
+    // instead of returning the same rejection forever. The UI tells the user
+    // "Try again in a moment." — that needs to actually be true.
+    inflight.catch(() => {
+      if (tablePromise === inflight) tablePromise = null;
+    });
+    tablePromise = inflight;
   }
   return tablePromise;
 }

@@ -228,14 +228,17 @@ export default function WeatherMap() {
       if (!response.ok) return;
       const raw: unknown = await response.json();
       const snapshot = parseIngestSnapshot(raw);
-      const { mapFeatures, listAlerts } = buildAlertViews(snapshot, {
+      const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
         countyLookup: countyLookupRef.current ?? undefined,
         userState: userStateRef.current ?? undefined,
       });
       setAllAlerts(listAlerts);
       setSnapshotTime(new Date(snapshot.generated_at));
       renderFeatures(mapFeatures);
-      renderMotion(snapshot.alerts);
+      // Use the filtered set so storm-motion arrows respect the same
+      // userState scoping as the polygons/list. Otherwise users with a saved
+      // ZIP see arrows from the other 7 states leaking through.
+      renderMotion(motionAlerts);
     } catch (err) {
       console.error('Failed to fetch live snapshot:', err);
     }
@@ -249,14 +252,14 @@ export default function WeatherMap() {
         if (!response.ok) return;
         const raw: unknown = await response.json();
         const snapshot = parseIngestSnapshot(raw);
-        const { mapFeatures, listAlerts } = buildAlertViews(snapshot, {
+        const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
         });
         setAllAlerts(listAlerts);
         setSnapshotTime(new Date(snapshot.generated_at));
         renderFeatures(mapFeatures);
-        renderMotion(snapshot.alerts);
+        renderMotion(motionAlerts);
       } catch (err) {
         console.error('Failed to fetch historical snapshot:', err);
       }
@@ -885,6 +888,12 @@ export default function WeatherMap() {
   // pan to the new coords so the map matches the choice.
   const handleLocationChange = useCallback(
     (next: { state: string; lat: number; lon: number } | null) => {
+      // Update the ref synchronously BEFORE kicking off the refresh below.
+      // The effect that mirrors `userState` -> `userStateRef.current` only runs
+      // after the next render, but `refreshCurrentFrameRef.current?.()` reads
+      // the ref immediately. Without this line the first refresh after Save
+      // runs against the previous filter and renders one frame of wrong data.
+      userStateRef.current = next?.state ?? null;
       setUserStateLocal(next?.state ?? null);
       const m = map.current;
       if (m) {

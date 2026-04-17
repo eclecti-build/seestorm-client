@@ -334,6 +334,30 @@ describe('buildAlertViews — userState filter', () => {
     );
     expect(out.listAlerts).toHaveLength(2);
   });
+
+  it('exposes motionAlerts filtered to the same userState scope', () => {
+    // Regression: motion arrows used to be rendered against snapshot.alerts
+    // (unfiltered), so users with a saved ZIP saw arrows from every other
+    // covered state leaking in. motionAlerts must mirror the userState filter.
+    const out = buildAlertViews(
+      snap([
+        ingest({ nws_id: 'WI1', area_state: 'WI' }),
+        ingest({ nws_id: 'IL1', area_state: 'IL' }),
+        ingest({ nws_id: 'BORDER', area_state: 'IL', states: ['IL', 'WI'] }),
+      ]),
+      { userState: 'WI' },
+    );
+    expect(out.motionAlerts.map((a) => a.nws_id)).toEqual(['WI1', 'BORDER']);
+  });
+
+  it('motionAlerts equals snapshot.alerts when no userState is set', () => {
+    const input = snap([
+      ingest({ nws_id: 'WI1', area_state: 'WI' }),
+      ingest({ nws_id: 'IL1', area_state: 'IL' }),
+    ]);
+    const out = buildAlertViews(input);
+    expect(out.motionAlerts).toEqual(input.alerts);
+  });
 });
 
 describe('groupByFamily', () => {
