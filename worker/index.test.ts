@@ -86,9 +86,7 @@ describe('listNewestHistoryEntries', () => {
     const result = await listNewestHistoryEntries(bucket, 60);
     expect(result).toHaveLength(60);
     // Newest = 2500th generated key, at start + 2499 * 30s.
-    const expectedNewest = new Date(
-      new Date('2026-04-17T00:00:00Z').getTime() + 2499 * 30_000,
-    );
+    const expectedNewest = new Date(new Date('2026-04-17T00:00:00Z').getTime() + 2499 * 30_000);
     const pad = (n: number, w = 2) => n.toString().padStart(w, '0');
     const expectedTs =
       pad(expectedNewest.getUTCFullYear(), 4) +
