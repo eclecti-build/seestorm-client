@@ -1,0 +1,73 @@
+// ZIP-to-coordinates lookup against a bundled JSON table for the 8 Great
+// Lakes states (MN, WI, IL, IN, MI, OH, PA, NY).
+//
+// The JSON is loaded via dynamic `import()` so it isn't pulled into the
+// initial JS bundle — it only ships down the wire when a user actually
+// types a ZIP into the LocationBanner. Subsequent lookups hit the in-memory
+// promise cache, so repeated lookups don't refetch.
+
+export interface ZipRecord {
+  lat: number;
+  lon: number;
+  state: string;
+  county: string;
+}
+
+type ZipTable = Record<string, ZipRecord>;
+
+let tablePromise: Promise<ZipTable> | null = null;
+
+function isZipRecord(v: unknown): v is ZipRecord {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.lat === 'number' &&
+    typeof r.lon === 'number' &&
+    typeof r.state === 'string' &&
+    typeof r.county === 'string'
+  );
+}
+
+async function loadTable(): Promise<ZipTable> {
+  if (!tablePromise) {
+    tablePromise = (async () => {
+      // fetch() the static asset rather than a Webpack/Turbopack `import` of
+      // the JSON — keeps the file out of the JS bundle entirely (it lives in
+      // `public/data/`) and lets the browser/CDN cache it independently.
+      const res = await fetch('/data/zip-greatlakes.json');
+      if (!res.ok) {
+        throw new Error(`ZIP table fetch failed: ${res.status}`);
+      }
+      const raw: unknown = await res.json();
+      if (!raw || typeof raw !== 'object') return {};
+      // Validate shape lazily — bad entries are filtered out, good ones
+      // are kept, so a partial deploy doesn't break the whole lookup.
+      const out: ZipTable = {};
+      for (const [zip, record] of Object.entries(raw as Record<string, unknown>)) {
+        if (isZipRecord(record)) out[zip] = record;
+      }
+      return out;
+    })();
+  }
+  return tablePromise;
+}
+
+/** Normalize user input to a 5-digit ZIP. Returns null if not parseable. */
+export function normalizeZip(input: string): string | null {
+  const cleaned = input.trim();
+  // Accept "53703", "53703-1234" (take ZIP5), or strings with surrounding whitespace.
+  const match = cleaned.match(/^(\d{5})(?:-\d{4})?$/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Look up a ZIP code in the Great Lakes table.
+ * Returns null when the ZIP isn't in the bundled set (out-of-region or
+ * malformed input).
+ */
+export async function lookupZip(zip: string): Promise<ZipRecord | null> {
+  const normalized = normalizeZip(zip);
+  if (!normalized) return null;
+  const table = await loadTable();
+  return table[normalized] ?? null;
+}

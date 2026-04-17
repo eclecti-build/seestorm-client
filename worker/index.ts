@@ -41,6 +41,14 @@ const HISTORY_CACHE_CONTROL = 'public, max-age=31536000, immutable';
  */
 const LIST_CACHE_CONTROL = 'public, max-age=60, s-maxage=60';
 
+/**
+ * /v1/geo cache. The CF edge derives geo from the *requesting IP*, so the
+ * answer is per-IP. We cache modestly at the edge (5min) with SWR so a flood
+ * of clients in the same metro share a hit, and stale-while-revalidate keeps
+ * latency low when the cache age rolls over.
+ */
+const GEO_CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=60';
+
 /** Compact RFC3339-like timestamp: 20060102T150405Z (matches ingest's key format). */
 const TIMESTAMP_RE = /^\d{8}T\d{6}Z$/;
 
@@ -69,6 +77,14 @@ async function handleApiRequest(request: Request, url: URL, env: Env): Promise<R
   // /v1/active-events.json — the live overwritten snapshot.
   if (url.pathname === '/v1/active-events.json') {
     return serveObject(request, env, 'active-events.json', LIVE_CACHE_CONTROL);
+  }
+
+  // /v1/geo — best-effort suggested location from the CF edge metadata. The
+  // client can use this to pre-fill the LocationBanner ZIP input or to skip
+  // the prompt entirely when a confident match is available. This is a
+  // SUGGESTION, not authoritative — the user always wins via manual input.
+  if (url.pathname === '/v1/geo') {
+    return serveGeoSuggestion(request);
   }
 
   // /v1/history — JSON index of recent history snapshots.
@@ -301,6 +317,45 @@ function parseHistoryKey(key: string): HistoryEntry | null {
   const ts = `${y}${m}${d}T${hh}${mm}${ss}Z`;
   const generated_at = `${y}-${m}-${d}T${hh}:${mm}:${ss}Z`;
   return { ts, generated_at };
+}
+
+/**
+ * Build a `{zip, state, lat, lon}` suggestion from `request.cf` (Cloudflare
+ * IP geolocation metadata). Fields can be missing or empty for some clients
+ * (corporate proxies, recently-changed allocations) — we return whatever we
+ * have and let the client decide whether the suggestion is good enough to
+ * pre-fill.
+ *
+ * The IP-derived ZIP is the *postal code at the IP geolocation endpoint*,
+ * which is sometimes a regional code, not the user's actual home ZIP. The
+ * client UI must label this as a "guess" rather than treating it as
+ * authoritative — see LocationBanner for the manual-override path.
+ */
+function serveGeoSuggestion(request: Request): Response {
+  // Cloudflare's typed `request.cf` is `IncomingRequestCfProperties`. Some
+  // fields (postalCode, region) are documented as `string` but can be empty.
+  const cf = (request as unknown as { cf?: Record<string, unknown> }).cf ?? {};
+  const zipRaw = typeof cf.postalCode === 'string' ? cf.postalCode : '';
+  const stateRaw = typeof cf.region === 'string' ? cf.region : '';
+  const latRaw = typeof cf.latitude === 'string' ? cf.latitude : '';
+  const lonRaw = typeof cf.longitude === 'string' ? cf.longitude : '';
+
+  const lat = Number.parseFloat(latRaw);
+  const lon = Number.parseFloat(lonRaw);
+
+  const body = JSON.stringify({
+    zip: zipRaw,
+    state: stateRaw,
+    lat: Number.isFinite(lat) ? lat : null,
+    lon: Number.isFinite(lon) ? lon : null,
+  });
+
+  return new Response(body, {
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': GEO_CACHE_CONTROL,
+    },
+  });
 }
 
 function buildObjectHeaders(object: R2Object, cacheControl: string): Headers {

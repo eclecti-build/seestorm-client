@@ -19,7 +19,9 @@ import {
 import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import { boostBasemapContrast } from '@/lib/mapContrast';
 import { alertLayerFilter } from '@/lib/alertFilter';
+import { getUserLocation } from '@/lib/userLocation';
 import AlertsPanel from './AlertsPanel';
+import LocationBanner from './LocationBanner';
 import MapLegend from './MapLegend';
 
 // Wisconsin center — kept for backward reference (single-state legacy view).
@@ -33,6 +35,9 @@ const DEFAULT_ZOOM = 7;
 // (MN/WI/IL/IN/MI/OH/PA/NY) with Lake Michigan at the visual center.
 const MIDWEST_CENTER: [number, number] = [-87, 43];
 const MIDWEST_ZOOM = 5;
+// Zoom we hydrate to when the user has a saved ZIP — close enough to read
+// county-level features without losing the surrounding storm context.
+const USER_LOCATION_ZOOM = 8;
 
 // Radar animation tuning. These values balance responsiveness (slider feels
 // immediate) against smoothness (no visible popping during playback).
@@ -199,6 +204,23 @@ export default function WeatherMap() {
     (map.current.getSource('alert-motion') as maplibregl.GeoJSONSource).setData(fc);
   }, []);
 
+  // User's saved state (if any) — drives the userState filter so the side
+  // panel and map don't drown the user in alerts from the other 7 Great
+  // Lakes states. Hydrated from localStorage after mount to stay SSR-safe.
+  const [userState, setUserStateLocal] = useState<string | null>(null);
+  useEffect(() => {
+    const loc = getUserLocation();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration from localStorage
+    setUserStateLocal(loc?.state ?? null);
+  }, []);
+  // Keep the latest filter state in a ref so async fetch callbacks read the
+  // current value without re-creating themselves on every change (which would
+  // tear down the polling interval).
+  const userStateRef = useRef<string | null>(null);
+  useEffect(() => {
+    userStateRef.current = userState;
+  }, [userState]);
+
   // Fetch the live snapshot (/v1/active-events.json) — used when sliderValue is live.
   const fetchLive = useCallback(async () => {
     try {
@@ -208,6 +230,7 @@ export default function WeatherMap() {
       const snapshot = parseIngestSnapshot(raw);
       const { mapFeatures, listAlerts } = buildAlertViews(snapshot, {
         countyLookup: countyLookupRef.current ?? undefined,
+        userState: userStateRef.current ?? undefined,
       });
       setAllAlerts(listAlerts);
       setSnapshotTime(new Date(snapshot.generated_at));
@@ -228,6 +251,7 @@ export default function WeatherMap() {
         const snapshot = parseIngestSnapshot(raw);
         const { mapFeatures, listAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
+          userState: userStateRef.current ?? undefined,
         });
         setAllAlerts(listAlerts);
         setSnapshotTime(new Date(snapshot.generated_at));
@@ -432,13 +456,24 @@ export default function WeatherMap() {
       process.env.NEXT_PUBLIC_MAP_STYLE_URL ||
       'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
-    void DEFAULT_ZOOM; // referenced to keep export but no longer the initial zoom
+    // Initial extent: Great Lakes basin by default. If the user has a saved
+    // location (from the ZIP banner), hydrate to their coordinates at a
+    // closer zoom so the first paint is immediately personal.
+    //
+    // SSR-safe: getUserLocation returns null on the server (no localStorage),
+    // so the server-rendered shell uses MIDWEST_* and the client may then
+    // re-center after hydration. Keeping this in the map init effect (which
+    // is client-only) avoids a visible re-centering jump.
+    const saved = getUserLocation();
+    const initialCenter: [number, number] = saved ? [saved.lon, saved.lat] : MIDWEST_CENTER;
+    const initialZoom = saved ? USER_LOCATION_ZOOM : MIDWEST_ZOOM;
+    void DEFAULT_ZOOM; // referenced to keep export but not used as default
 
     const m = new maplibregl.Map({
       container: mapContainer.current,
       style: mapStyle,
-      center: MIDWEST_CENTER,
-      zoom: MIDWEST_ZOOM,
+      center: initialCenter,
+      zoom: initialZoom,
       attributionControl: {},
     });
 
@@ -845,9 +880,33 @@ export default function WeatherMap() {
     }
   }
 
+  // Wired into LocationBanner: when the user sets/clears a ZIP, update the
+  // userState filter (re-derives the views on next fetch via refresh) and
+  // pan to the new coords so the map matches the choice.
+  const handleLocationChange = useCallback(
+    (next: { state: string; lat: number; lon: number } | null) => {
+      setUserStateLocal(next?.state ?? null);
+      const m = map.current;
+      if (m) {
+        if (next) {
+          m.flyTo({ center: [next.lon, next.lat], zoom: USER_LOCATION_ZOOM, duration: 800 });
+        } else {
+          m.flyTo({ center: MIDWEST_CENTER, zoom: MIDWEST_ZOOM, duration: 800 });
+        }
+      }
+      // Force the active frame to re-fetch so filtering takes effect immediately.
+      refreshCurrentFrameRef.current?.();
+    },
+    [],
+  );
+
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
+
+      {/* ZIP-based personalization banner. Above the map but doesn't intercept
+          map clicks outside its bounds. Persists to localStorage. */}
+      <LocationBanner onLocationChange={handleLocationChange} />
 
       {/* Alert count badge — counts ALL active alerts, including zone-aggregate
           products (Watches) that don't render on the map. Previously this
