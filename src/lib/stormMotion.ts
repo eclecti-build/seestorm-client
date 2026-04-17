@@ -19,6 +19,12 @@ export interface StormMotion {
   direction_deg: number; // FROM which storm comes
   speed_kt: number;
   valid_at: string; // ISO-8601
+  // Optional list of lat,lon pairs when the warning covers a multi-cell storm
+  // line. `[0]` equals `[origin_lat, origin_lon]`. Absent (undefined) for
+  // single-point motion, which is the common case. Carried for type-safety
+  // against the ingest payload; the renderer ignores it for now and still
+  // projects forward from the single origin + bearing.
+  points?: [number, number][];
 }
 
 export interface MotionSourceAlert {

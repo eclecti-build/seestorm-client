@@ -297,6 +297,71 @@ describe('buildMotionFeatures', () => {
   });
 });
 
+// -----------------------------------------------------------------------------
+// Optional `points` field — multi-cell storm line support
+//
+// The ingest parser emits an optional `points[]` array when an NWS warning
+// carries multiple reported storm positions (common for storm lines that span
+// several cells). The client type accepts it for forward-compat, but the
+// renderer continues to project from the single origin + bearing. These tests
+// lock in both the type acceptance and the renderer-pass-through contract.
+// -----------------------------------------------------------------------------
+
+describe('StormMotion with optional points field', () => {
+  it('type accepts a motion with points (compile-time + runtime)', () => {
+    const withPoints: StormMotion = {
+      origin_lat: 44.31,
+      origin_lon: -91.8,
+      direction_deg: 244,
+      speed_kt: 38,
+      valid_at: '2026-04-17T20:29:00Z',
+      points: [
+        [44.31, -91.8],
+        [44.23, -91.75],
+        [44.02, -91.77],
+      ],
+    };
+    expect(withPoints.points).toHaveLength(3);
+    expect(withPoints.points?.[0]).toEqual([44.31, -91.8]);
+  });
+
+  it('type accepts a motion without points (field is truly optional)', () => {
+    const withoutPoints: StormMotion = {
+      origin_lat: 44.31,
+      origin_lon: -91.8,
+      direction_deg: 244,
+      speed_kt: 38,
+      valid_at: '2026-04-17T20:29:00Z',
+    };
+    expect(withoutPoints.points).toBeUndefined();
+  });
+
+  it('buildMotionFeatures ignores the points field — output is identical to a points-less motion', () => {
+    // Same origin/bearing/speed/timestamp; one carries `points`, the other
+    // does not. The renderer must produce deeply-equal feature collections.
+    const baseline: StormMotion = {
+      origin_lat: 44.31,
+      origin_lon: -91.8,
+      direction_deg: 244,
+      speed_kt: 38,
+      valid_at: '2026-04-17T20:29:00Z',
+    };
+    const withPoints: StormMotion = {
+      ...baseline,
+      points: [
+        [44.31, -91.8],
+        [44.23, -91.75],
+        [44.02, -91.77],
+      ],
+    };
+
+    const fcBaseline = buildMotionFeatures([alert(baseline, { nws_id: 'X' })]);
+    const fcWithPoints = buildMotionFeatures([alert(withPoints, { nws_id: 'X' })]);
+
+    expect(fcWithPoints).toEqual(fcBaseline);
+  });
+});
+
 describe('ktToMph', () => {
   it('converts kt to mph with rounding', () => {
     expect(ktToMph(0)).toBe(0);
