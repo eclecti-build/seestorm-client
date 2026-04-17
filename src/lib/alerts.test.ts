@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   alertFamily,
+  alertTouchesState,
   buildAlertViews,
   colorForEvent,
   FALLBACK_COLOR,
   FAMILY_ORDER,
   groupByFamily,
   ingestToWeatherAlert,
+  parseIngestSnapshot,
   priorityForEvent,
   resolveAlertUrl,
   tierForEvent,
@@ -46,7 +48,7 @@ function ingest(overrides: Partial<IngestAlert> = {}): IngestAlert {
 function snap(alerts: IngestAlert[]): IngestSnapshot {
   return {
     generated_at: '2026-04-17T20:00:00Z',
-    area: 'WI',
+    areas: ['WI'],
     alert_count: alerts.length,
     alerts,
   };
@@ -231,6 +233,106 @@ describe('buildAlertViews', () => {
       'Severe Thunderstorm Warning',
       'Tornado Watch',
     ]);
+  });
+});
+
+describe('parseIngestSnapshot', () => {
+  it('accepts a v2 snapshot with schema_version=2 and areas[]', () => {
+    const out = parseIngestSnapshot({
+      schema_version: 2,
+      generated_at: '2026-04-17T20:00:00Z',
+      areas: ['WI', 'IL'],
+      alert_count: 0,
+      alerts: [],
+    });
+    expect(out.areas).toEqual(['WI', 'IL']);
+    expect(out.schema_version).toBe(2);
+  });
+
+  it('coerces a legacy v1 snapshot (no schema_version, scalar area) into the v2 shape', () => {
+    const out = parseIngestSnapshot({
+      generated_at: '2026-04-17T20:00:00Z',
+      area: 'WI',
+      alert_count: 0,
+      alerts: [],
+    });
+    expect(out.areas).toEqual(['WI']);
+    expect(out.schema_version).toBeUndefined();
+  });
+
+  it('throws on an unknown future schema_version', () => {
+    expect(() =>
+      parseIngestSnapshot({
+        schema_version: 99,
+        generated_at: '2026-04-17T20:00:00Z',
+        areas: ['WI'],
+        alert_count: 0,
+        alerts: [],
+      }),
+    ).toThrow(/schema_version/);
+  });
+
+  it('throws on missing generated_at or alerts', () => {
+    expect(() => parseIngestSnapshot({ areas: ['WI'], alerts: [] })).toThrow(/generated_at/);
+    expect(() =>
+      parseIngestSnapshot({ generated_at: '2026-04-17T20:00:00Z', areas: ['WI'] }),
+    ).toThrow(/alerts/);
+  });
+
+  it('throws on non-object input', () => {
+    expect(() => parseIngestSnapshot(null)).toThrow();
+    expect(() => parseIngestSnapshot('snapshot')).toThrow();
+  });
+});
+
+describe('alertTouchesState', () => {
+  it('matches when area_state equals the user state (case-insensitive)', () => {
+    expect(alertTouchesState(ingest({ area_state: 'WI' }), 'WI')).toBe(true);
+    expect(alertTouchesState(ingest({ area_state: 'wi' }), 'WI')).toBe(true);
+    expect(alertTouchesState(ingest({ area_state: 'IL' }), 'WI')).toBe(false);
+  });
+
+  it('matches when states[] includes the user state (cross-border alert)', () => {
+    expect(alertTouchesState(ingest({ area_state: 'IL', states: ['IL', 'WI'] }), 'WI')).toBe(true);
+    expect(alertTouchesState(ingest({ states: ['MN', 'WI'] }), 'IL')).toBe(false);
+  });
+
+  it('returns true when the alert has no state metadata (legacy v1 fallback)', () => {
+    expect(alertTouchesState(ingest({ area_state: null }), 'WI')).toBe(true);
+  });
+});
+
+describe('buildAlertViews — userState filter', () => {
+  it('keeps alerts whose area_state matches', () => {
+    const out = buildAlertViews(
+      snap([
+        ingest({ nws_id: 'WI1', area_state: 'WI' }),
+        ingest({ nws_id: 'IL1', area_state: 'IL' }),
+      ]),
+      { userState: 'WI' },
+    );
+    expect(out.listAlerts.map((a) => a.properties.nwsId)).toEqual(['WI1']);
+  });
+
+  it('keeps cross-border alerts whose states[] includes the user state', () => {
+    const out = buildAlertViews(
+      snap([
+        ingest({ nws_id: 'BORDER', area_state: 'IL', states: ['IL', 'WI'] }),
+        ingest({ nws_id: 'IL_ONLY', area_state: 'IL', states: ['IL'] }),
+      ]),
+      { userState: 'WI' },
+    );
+    expect(out.listAlerts.map((a) => a.properties.nwsId)).toEqual(['BORDER']);
+  });
+
+  it('returns all alerts when no userState is set', () => {
+    const out = buildAlertViews(
+      snap([
+        ingest({ nws_id: 'WI1', area_state: 'WI' }),
+        ingest({ nws_id: 'IL1', area_state: 'IL' }),
+      ]),
+    );
+    expect(out.listAlerts).toHaveLength(2);
   });
 });
 

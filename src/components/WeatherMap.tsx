@@ -8,11 +8,11 @@ import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '
 import { buildMotionFeatures, setMotionVisibility } from '@/lib/stormMotion';
 import {
   buildAlertViews,
+  parseIngestSnapshot,
   WARNING_COLORS,
   colorForEvent,
   type AlertsResponse,
   type AlertTier,
-  type IngestSnapshot,
   type IngestAlert,
   type WeatherAlert,
 } from '@/lib/alerts';
@@ -22,9 +22,17 @@ import { alertLayerFilter } from '@/lib/alertFilter';
 import AlertsPanel from './AlertsPanel';
 import MapLegend from './MapLegend';
 
-// Wisconsin center coordinates
+// Wisconsin center — kept for backward reference (single-state legacy view).
+// No longer the default initial extent now that SeeStorm covers the
+// multi-state Great Lakes basin.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- retained for docs/back-compat
 const WISCONSIN_CENTER: [number, number] = [-89.5, 44.5];
 const DEFAULT_ZOOM = 7;
+
+// Great Lakes default extent — covers the 8-state ingest scope
+// (MN/WI/IL/IN/MI/OH/PA/NY) with Lake Michigan at the visual center.
+const MIDWEST_CENTER: [number, number] = [-87, 43];
+const MIDWEST_ZOOM = 5;
 
 // Radar animation tuning. These values balance responsiveness (slider feels
 // immediate) against smoothness (no visible popping during playback).
@@ -196,7 +204,8 @@ export default function WeatherMap() {
     try {
       const response = await fetch('/v1/active-events.json');
       if (!response.ok) return;
-      const snapshot: IngestSnapshot = await response.json();
+      const raw: unknown = await response.json();
+      const snapshot = parseIngestSnapshot(raw);
       const { mapFeatures, listAlerts } = buildAlertViews(snapshot, {
         countyLookup: countyLookupRef.current ?? undefined,
       });
@@ -215,7 +224,8 @@ export default function WeatherMap() {
       try {
         const response = await fetch(`/v1/history/${ts}`);
         if (!response.ok) return;
-        const snapshot: IngestSnapshot = await response.json();
+        const raw: unknown = await response.json();
+        const snapshot = parseIngestSnapshot(raw);
         const { mapFeatures, listAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
         });
@@ -422,11 +432,13 @@ export default function WeatherMap() {
       process.env.NEXT_PUBLIC_MAP_STYLE_URL ||
       'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
+    void DEFAULT_ZOOM; // referenced to keep export but no longer the initial zoom
+
     const m = new maplibregl.Map({
       container: mapContainer.current,
       style: mapStyle,
-      center: WISCONSIN_CENTER,
-      zoom: DEFAULT_ZOOM,
+      center: MIDWEST_CENTER,
+      zoom: MIDWEST_ZOOM,
       attributionControl: {},
     });
 
