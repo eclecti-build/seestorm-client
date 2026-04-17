@@ -841,7 +841,7 @@ export default function WeatherMap() {
           products (Watches) that don't render on the map. Previously this
           reflected only polygon features, silently under-reporting Watches. */}
       {allAlerts.length > 0 && (
-        <div className="absolute top-4 left-4 bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-lg">
+        <div className="absolute top-[calc(1rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-lg">
           {allAlerts.length} active alert
           {allAlerts.length !== 1 ? 's' : ''}
         </div>
@@ -870,7 +870,7 @@ export default function WeatherMap() {
       {/* Historical mode indicator — radar + alerts are NOT current */}
       {!isLive && !isForecast && (
         <div
-          className="absolute top-4 left-1/2 -translate-x-1/2 bg-amber-500 text-black px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide shadow-lg"
+          className="absolute top-[calc(1rem+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 bg-amber-500 text-black px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide shadow-lg"
           role="status"
           aria-live="polite"
         >
@@ -883,7 +883,7 @@ export default function WeatherMap() {
           mistakes HRRR output for an actual NWS warning or live radar return. */}
       {isForecast && (
         <div
-          className="absolute top-4 left-1/2 -translate-x-1/2 bg-black text-red-400 border border-red-500 px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide shadow-lg"
+          className="absolute top-[calc(1rem+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 bg-black text-red-400 border border-red-500 px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide shadow-lg"
           role="status"
           aria-live="polite"
         >
@@ -893,7 +893,7 @@ export default function WeatherMap() {
 
       {/* Selected alert detail panel */}
       {selectedAlert && (
-        <div className="absolute top-4 right-16 max-w-sm bg-gray-900/95 text-white rounded-lg shadow-xl p-4 border border-gray-700">
+        <div className="absolute top-[calc(1rem+env(safe-area-inset-top))] right-[calc(4rem+env(safe-area-inset-right))] max-w-sm bg-gray-900/95 text-white rounded-lg shadow-xl p-4 border border-gray-700">
           <button
             onClick={() => setSelectedAlert(null)}
             className="absolute top-2 right-2 text-gray-400 hover:text-white"
@@ -921,7 +921,7 @@ export default function WeatherMap() {
       )}
 
       {/* Time slider + status bar */}
-      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/60 to-transparent p-4 pb-5 pointer-events-none">
+      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/60 to-transparent p-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))] pointer-events-none">
         <div className="max-w-4xl mx-auto space-y-2 pointer-events-auto">
           {history.length > 0 && (
             <>

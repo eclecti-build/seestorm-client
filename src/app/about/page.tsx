@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function AboutPage() {
   return (
-    <div className="h-screen w-full overflow-y-auto bg-[var(--ss-bg)] text-[var(--ss-ink)]">
+    <div className="ss-viewport-fill w-full overflow-y-auto bg-[var(--ss-bg)] text-[var(--ss-ink)]">
       <div className="mx-auto max-w-2xl px-6 py-16">
         <Link
           href="/"
