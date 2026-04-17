@@ -29,6 +29,11 @@ const WARNING_PRIORITY: Record<string, number> = {
 const WISCONSIN_CENTER: [number, number] = [-89.5, 44.5];
 const DEFAULT_ZOOM = 7;
 
+// ---------------------------------------------------------------------------
+// Types matching the Worker + ingest contract
+// ---------------------------------------------------------------------------
+
+// Map-internal shape (kept stable because all MapLibre render logic uses it).
 interface WeatherAlert {
   type: 'Feature';
   properties: {
@@ -50,52 +55,177 @@ interface AlertsResponse {
   features: WeatherAlert[];
 }
 
+// Ingest snapshot shape (from seestorm-ingest internal/publisher.Snapshot).
+// Intentionally different from the map-internal shape — we translate below.
+interface IngestAlert {
+  nws_id: string;
+  event_type: string;
+  severity: string;
+  headline: string;
+  description: string;
+  area_desc: string;
+  geometry: GeoJSON.Geometry | null;
+  effective_at: string;
+  expires_at: string;
+}
+
+interface IngestSnapshot {
+  generated_at: string;
+  area: string;
+  alert_count: number;
+  alerts: IngestAlert[];
+}
+
+// History list from `/v1/history`.
+interface HistoryEntry {
+  ts: string;
+  generated_at: string;
+}
+
+interface HistoryResponse {
+  snapshots: HistoryEntry[];
+  truncated: boolean;
+  count: number;
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot transform
+// ---------------------------------------------------------------------------
+
+function snapshotToFeatures(snapshot: IngestSnapshot): AlertsResponse {
+  const features: WeatherAlert[] = snapshot.alerts
+    .filter((a): a is IngestAlert & { geometry: GeoJSON.Geometry } => a.geometry !== null)
+    .sort((a, b) => (WARNING_PRIORITY[a.event_type] ?? 99) - (WARNING_PRIORITY[b.event_type] ?? 99))
+    .map((a) => ({
+      type: 'Feature',
+      properties: {
+        event: a.event_type,
+        headline: a.headline,
+        description: a.description,
+        severity: a.severity,
+        urgency: '',
+        effective: a.effective_at,
+        expires: a.expires_at,
+        senderName: '',
+        areaDesc: a.area_desc,
+      },
+      geometry: a.geometry,
+    }));
+
+  return { type: 'FeatureCollection', features };
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export default function WeatherMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
+
   const [alerts, setAlerts] = useState<AlertsResponse | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [snapshotTime, setSnapshotTime] = useState<Date | null>(null);
   const [selectedAlert, setSelectedAlert] = useState<WeatherAlert | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  // sliderValue ranges 0..history.length.
+  // history.length (rightmost) means "live" — poll the current snapshot every 30s.
+  // 0..history.length-1 means "historical" — show snapshot at that index.
+  const [sliderValue, setSliderValue] = useState<number>(0);
+  const [mapReady, setMapReady] = useState<boolean>(false);
+  // `now` is a ticking reference time used only for rendering "Xm ago" labels.
+  // Kept in state (not read directly via Date.now() in render) so React 19's
+  // purity lint stays happy and re-renders only fire at the cadence we choose.
+  const [now, setNow] = useState<number>(() => Date.now());
 
-  const fetchAlerts = useCallback(async () => {
-    try {
-      const response = await fetch('https://api.weather.gov/alerts/active?area=WI&status=actual', {
-        headers: {
-          'User-Agent': '(seestorm.org, contact@seestorm.org)',
-        },
-      });
-      if (!response.ok) return;
+  const isLive = history.length === 0 || sliderValue === history.length;
 
-      const data: AlertsResponse = await response.json();
-
-      // Filter to only features with geometry and sort by priority
-      const withGeometry = data.features
-        .filter((f) => f.geometry !== null)
-        .sort(
-          (a, b) =>
-            (WARNING_PRIORITY[a.properties.event] ?? 99) -
-            (WARNING_PRIORITY[b.properties.event] ?? 99),
-        );
-
-      const filtered: AlertsResponse = {
-        type: 'FeatureCollection',
-        features: withGeometry,
-      };
-
-      setAlerts(filtered);
-      setLastUpdated(new Date());
-
-      // Update map source if it exists
-      if (map.current?.getSource('alerts')) {
-        (map.current.getSource('alerts') as maplibregl.GeoJSONSource).setData(
-          filtered as unknown as GeoJSON.FeatureCollection,
-        );
-      }
-    } catch (err) {
-      console.error('Failed to fetch alerts:', err);
-    }
+  // Paint a FeatureCollection onto the map's alerts source.
+  const renderFeatures = useCallback((features: AlertsResponse) => {
+    if (!map.current?.getSource('alerts')) return;
+    (map.current.getSource('alerts') as maplibregl.GeoJSONSource).setData(
+      features as unknown as GeoJSON.FeatureCollection,
+    );
   }, []);
 
+  // Fetch the live snapshot (/v1/active-events.json) — used when sliderValue is live.
+  const fetchLive = useCallback(async () => {
+    try {
+      const response = await fetch('/v1/active-events.json');
+      if (!response.ok) return;
+      const snapshot: IngestSnapshot = await response.json();
+      const features = snapshotToFeatures(snapshot);
+      setAlerts(features);
+      setSnapshotTime(new Date(snapshot.generated_at));
+      renderFeatures(features);
+    } catch (err) {
+      console.error('Failed to fetch live snapshot:', err);
+    }
+  }, [renderFeatures]);
+
+  // Fetch one historical snapshot by timestamp key.
+  const fetchHistorical = useCallback(
+    async (ts: string) => {
+      try {
+        const response = await fetch(`/v1/history/${ts}`);
+        if (!response.ok) return;
+        const snapshot: IngestSnapshot = await response.json();
+        const features = snapshotToFeatures(snapshot);
+        setAlerts(features);
+        setSnapshotTime(new Date(snapshot.generated_at));
+        renderFeatures(features);
+      } catch (err) {
+        console.error('Failed to fetch historical snapshot:', err);
+      }
+    },
+    [renderFeatures],
+  );
+
+  // Fetch the history index from the Worker.
+  const fetchHistory = useCallback(async () => {
+    try {
+      const response = await fetch('/v1/history?limit=60');
+      if (!response.ok) return;
+      const data: HistoryResponse = await response.json();
+      // API returns newest-first; reverse so index 0 is oldest, len-1 is newest.
+      const ordered = data.snapshots.slice().reverse();
+      setHistory((prev) => {
+        // If the slider was on "live" (== prev.length), keep it on "live" after the list grows.
+        if (sliderValue === prev.length) {
+          setSliderValue(ordered.length);
+        }
+        return ordered;
+      });
+    } catch (err) {
+      console.error('Failed to fetch history index:', err);
+    }
+  }, [sliderValue]);
+
+  // When in live mode, poll live + refresh history list every 30s.
+  // fetchLive/fetchHistory are async — setState happens after `await`, not
+  // synchronously in this effect body — so react-hooks/set-state-in-effect
+  // is a false positive here.
+  useEffect(() => {
+    if (!mapReady || !isLive) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; setState post-await
+    void fetchLive();
+
+    void fetchHistory();
+    const interval = setInterval(() => {
+      void fetchLive();
+      void fetchHistory();
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [mapReady, isLive, fetchLive, fetchHistory]);
+
+  // When scrubbed to historical, fetch that snapshot. Same async-setState pattern.
+  useEffect(() => {
+    if (!mapReady || isLive) return;
+    const entry = history[sliderValue];
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; setState post-await
+    if (entry) void fetchHistorical(entry.ts);
+  }, [mapReady, isLive, sliderValue, history, fetchHistorical]);
+
+  // Map init.
   useEffect(() => {
     if (!mapContainer.current) return;
 
@@ -124,7 +254,6 @@ export default function WeatherMap() {
     );
 
     m.on('load', () => {
-      // Add radar overlay from Iowa Mesonet
       m.addSource('radar', {
         type: 'raster',
         tiles: [
@@ -143,13 +272,11 @@ export default function WeatherMap() {
         },
       });
 
-      // Add alerts source (empty initially)
       m.addSource('alerts', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       });
 
-      // Warning polygon fills
       m.addLayer({
         id: 'alert-fills',
         type: 'fill',
@@ -176,7 +303,6 @@ export default function WeatherMap() {
         },
       });
 
-      // Warning polygon outlines
       m.addLayer({
         id: 'alert-outlines',
         type: 'line',
@@ -204,7 +330,6 @@ export default function WeatherMap() {
         },
       });
 
-      // Click handler for alert polygons
       m.on('click', 'alert-fills', (e) => {
         if (e.features && e.features[0]) {
           setSelectedAlert(e.features[0] as unknown as WeatherAlert);
@@ -219,19 +344,33 @@ export default function WeatherMap() {
         m.getCanvas().style.cursor = '';
       });
 
-      // Fetch alerts immediately and then every 30 seconds
-      fetchAlerts();
+      setMapReady(true);
     });
 
     map.current = m;
 
-    const interval = setInterval(fetchAlerts, 30_000);
-
     return () => {
-      clearInterval(interval);
       m.remove();
     };
-  }, [fetchAlerts]);
+  }, []);
+
+  // Tick `now` every 30s so the "Xm ago" label advances without a full re-fetch.
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Label describing what the user is currently viewing. Pure in `now` — the
+  // component's ticking state — so React 19's purity lint is satisfied.
+  let historicalLabel = 'Live';
+  if (!isLive) {
+    const entry = history[sliderValue];
+    if (entry) {
+      const dt = new Date(entry.generated_at);
+      const minutesAgo = Math.round((now - dt.getTime()) / 60_000);
+      historicalLabel = `${dt.toLocaleTimeString()} (${minutesAgo}m ago)`;
+    }
+  }
 
   return (
     <div className="relative w-full h-full">
@@ -245,19 +384,13 @@ export default function WeatherMap() {
         </div>
       )}
 
-      {/* Last updated timestamp */}
-      {lastUpdated && (
-        <div className="absolute bottom-4 left-4 bg-black/70 text-white/70 px-2 py-1 rounded text-xs">
-          Updated {lastUpdated.toLocaleTimeString()}
-        </div>
-      )}
-
       {/* Selected alert detail panel */}
       {selectedAlert && (
         <div className="absolute top-4 right-16 max-w-sm bg-gray-900/95 text-white rounded-lg shadow-xl p-4 border border-gray-700">
           <button
             onClick={() => setSelectedAlert(null)}
             className="absolute top-2 right-2 text-gray-400 hover:text-white"
+            aria-label="Close alert details"
           >
             ✕
           </button>
@@ -279,6 +412,55 @@ export default function WeatherMap() {
           </div>
         </div>
       )}
+
+      {/* Time slider + status bar */}
+      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/60 to-transparent p-4 pb-5 pointer-events-none">
+        <div className="max-w-4xl mx-auto space-y-2 pointer-events-auto">
+          {history.length > 0 && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSliderValue(history.length)}
+                disabled={isLive}
+                className={`text-xs font-semibold px-2 py-1 rounded shrink-0 transition-colors ${
+                  isLive
+                    ? 'bg-red-600 text-white cursor-default'
+                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700 cursor-pointer'
+                }`}
+                aria-label="Return to live"
+              >
+                {isLive ? '● LIVE' : 'Go to LIVE'}
+              </button>
+
+              <input
+                type="range"
+                min={0}
+                max={history.length}
+                value={sliderValue}
+                onChange={(e) => setSliderValue(Number(e.target.value))}
+                className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700 accent-red-500"
+                aria-label="Scrub through snapshot history"
+              />
+
+              <div className="text-xs text-gray-300 font-mono shrink-0 w-44 text-right">
+                {historicalLabel}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between text-[11px] text-gray-400">
+            <span>
+              {snapshotTime
+                ? `Snapshot ${snapshotTime.toLocaleTimeString()}`
+                : 'Waiting for snapshot…'}
+            </span>
+            {history.length > 0 && (
+              <span>
+                {history.length} snapshot{history.length !== 1 ? 's' : ''} in history
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

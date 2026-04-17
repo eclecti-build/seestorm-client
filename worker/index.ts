@@ -8,8 +8,11 @@
  * The bucket has NO public access. Only this Worker (via the SNAPSHOTS binding)
  * and the ingest service (via its write-scoped API token) can reach objects.
  *
- * Public surface is versioned at `/v1/*` so we can evolve response formats
- * later without breaking clients.
+ * Public surface (all under /v1/ so the response schema can evolve):
+ *   GET /v1/active-events.json       → current snapshot, overwritten every poll
+ *   GET /v1/history                  → list of recent history snapshots
+ *   GET /v1/history/{timestamp}      → one history snapshot; {timestamp} is
+ *                                      YYYYMMDDTHHMMSSZ (e.g. 20260417T034500Z)
  */
 
 export interface Env {
@@ -19,15 +22,21 @@ export interface Env {
   ASSETS: Fetcher;
 }
 
-/**
- * Allowlist of snapshot object keys the public API will serve.
- * Anything the ingest service publishes that should be *internal* stays
- * off this list — only whitelisted keys are reachable from the public URL.
- */
-const PUBLIC_SNAPSHOTS: ReadonlySet<string> = new Set(['active-events.json']);
+/** Short edge cache for the live endpoint — ingest rewrites every 30s. */
+const LIVE_CACHE_CONTROL = 'public, max-age=10, s-maxage=10';
 
-/** Edge cache hint. Client polls every 10s so matching s-maxage keeps R2 cold. */
-const CACHE_CONTROL = 'public, max-age=10, s-maxage=10';
+/** Historical snapshots are immutable once written — cache for a year. */
+const HISTORY_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
+/** History list metadata — short cache so new snapshots appear promptly. */
+const LIST_CACHE_CONTROL = 'public, max-age=10, s-maxage=10';
+
+/** Compact RFC3339-like timestamp: 20060102T150405Z (matches ingest's key format). */
+const TIMESTAMP_RE = /^\d{8}T\d{6}Z$/;
+
+/** Default history window returned by /v1/history — 2 hours at 30s polls = 240 snapshots. */
+const HISTORY_DEFAULT_LIMIT = 240;
+const HISTORY_MAX_LIMIT = 1000;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -47,14 +56,39 @@ async function handleApiRequest(request: Request, url: URL, env: Env): Promise<R
     return methodNotAllowed();
   }
 
-  const objectKey = url.pathname.slice('/v1/'.length);
-
-  if (!PUBLIC_SNAPSHOTS.has(objectKey)) {
-    return notFound();
+  // /v1/active-events.json — the live overwritten snapshot.
+  if (url.pathname === '/v1/active-events.json') {
+    return serveObject(request, env, 'active-events.json', LIVE_CACHE_CONTROL);
   }
 
+  // /v1/history — JSON index of recent history snapshots.
+  if (url.pathname === '/v1/history') {
+    return serveHistoryList(request, url, env);
+  }
+
+  // /v1/history/{timestamp} — specific archived snapshot.
+  if (url.pathname.startsWith('/v1/history/')) {
+    const ts = url.pathname.slice('/v1/history/'.length);
+    if (!TIMESTAMP_RE.test(ts)) {
+      return notFound();
+    }
+    return serveObject(request, env, `history/${ts}.json`, HISTORY_CACHE_CONTROL);
+  }
+
+  return notFound();
+}
+
+/**
+ * Fetch an R2 object and stream it back, honoring If-None-Match for 304 responses.
+ */
+async function serveObject(
+  request: Request,
+  env: Env,
+  key: string,
+  cacheControl: string,
+): Promise<Response> {
   const ifNoneMatch = request.headers.get('if-none-match') ?? undefined;
-  const object = await env.SNAPSHOTS.get(objectKey, {
+  const object = await env.SNAPSHOTS.get(key, {
     onlyIf: ifNoneMatch ? { etagDoesNotMatch: ifNoneMatch } : undefined,
   });
 
@@ -62,26 +96,90 @@ async function handleApiRequest(request: Request, url: URL, env: Env): Promise<R
     return notFound();
   }
 
+  const headers = buildObjectHeaders(object, cacheControl);
+
   // R2 returns an R2ObjectBody on fetch, or a plain R2Object when the
   // conditional was satisfied (etag matched) — signal 304 to the client.
   if (!('body' in object)) {
-    return new Response(null, {
-      status: 304,
-      headers: withStandardHeaders(new Headers(), object),
-    });
+    return new Response(null, { status: 304, headers });
   }
 
-  const headers = withStandardHeaders(new Headers(), object);
   if (request.method === 'HEAD') {
     return new Response(null, { headers });
   }
   return new Response(object.body, { headers });
 }
 
-function withStandardHeaders(headers: Headers, object: R2Object): Headers {
+/**
+ * List historical snapshots. Response shape:
+ *   { snapshots: [{ ts: "20260417T034500Z", generated_at: "2026-04-17T03:45:00Z" }, ...] }
+ *
+ * Returned in descending chronological order (newest first) so the client can
+ * render the slider without re-sorting. Default window is the last
+ * HISTORY_DEFAULT_LIMIT snapshots; `?limit=N` overrides up to HISTORY_MAX_LIMIT.
+ */
+async function serveHistoryList(request: Request, url: URL, env: Env): Promise<Response> {
+  const limitParam = url.searchParams.get('limit');
+  let limit = HISTORY_DEFAULT_LIMIT;
+  if (limitParam) {
+    const n = Number.parseInt(limitParam, 10);
+    if (Number.isFinite(n) && n > 0) {
+      limit = Math.min(n, HISTORY_MAX_LIMIT);
+    }
+  }
+
+  // R2 list returns keys in ascending lexicographic order; since our keys are
+  // sortable timestamps, that's chronological. We list up to `limit` objects
+  // and reverse so the response is newest-first. For larger windows the
+  // client can paginate via `?limit=` up to HISTORY_MAX_LIMIT.
+  const listed = await env.SNAPSHOTS.list({
+    prefix: 'history/',
+    limit,
+  });
+
+  const snapshots = listed.objects
+    .map((o) => parseHistoryKey(o.key))
+    .filter((s): s is HistoryEntry => s !== null)
+    .reverse();
+
+  const body = JSON.stringify({
+    snapshots,
+    truncated: listed.truncated,
+    count: snapshots.length,
+  });
+
+  return new Response(body, {
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': LIST_CACHE_CONTROL,
+    },
+  });
+}
+
+interface HistoryEntry {
+  ts: string;
+  generated_at: string;
+}
+
+/**
+ * Parse `history/YYYYMMDDTHHMMSSZ.json` into { ts, generated_at }.
+ * Returns null if the key is malformed (shouldn't happen — ingest owns the format —
+ * but defend against stray manually-uploaded objects).
+ */
+function parseHistoryKey(key: string): HistoryEntry | null {
+  const match = key.match(/^history\/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.json$/);
+  if (!match) return null;
+  const [, y, m, d, hh, mm, ss] = match;
+  const ts = `${y}${m}${d}T${hh}${mm}${ss}Z`;
+  const generated_at = `${y}-${m}-${d}T${hh}:${mm}:${ss}Z`;
+  return { ts, generated_at };
+}
+
+function buildObjectHeaders(object: R2Object, cacheControl: string): Headers {
+  const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set('etag', object.httpEtag);
-  headers.set('cache-control', CACHE_CONTROL);
+  headers.set('cache-control', cacheControl);
   if (!headers.has('content-type')) {
     headers.set('content-type', 'application/json; charset=utf-8');
   }
