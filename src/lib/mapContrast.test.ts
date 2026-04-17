@@ -51,9 +51,7 @@ describe('boostBasemapContrast', () => {
 
   it('wraps expression-valued line-width without unpacking it', () => {
     const expr = ['interpolate', ['linear'], ['zoom'], 8, 1, 16, 6] as const;
-    const layers: StyleLayer[] = [
-      { id: 'road-expr', type: 'line', 'source-layer': 'road' },
-    ];
+    const layers: StyleLayer[] = [{ id: 'road-expr', type: 'line', 'source-layer': 'road' }];
     const { target, setPaint } = makeFakeMap(layers, {
       'road-expr:line-width': expr,
     });
@@ -78,9 +76,7 @@ describe('boostBasemapContrast', () => {
   });
 
   it('adds dark halos to place-label symbol layers without touching text-opacity', () => {
-    const layers: StyleLayer[] = [
-      { id: 'city-names', type: 'symbol', 'source-layer': 'place' },
-    ];
+    const layers: StyleLayer[] = [{ id: 'city-names', type: 'symbol', 'source-layer': 'place' }];
     const { target, setPaint } = makeFakeMap(layers);
 
     boostBasemapContrast(target);
@@ -109,9 +105,7 @@ describe('boostBasemapContrast', () => {
   });
 
   it('does NOT boost poi labels (keeps restaurants/parks from being lifted)', () => {
-    const layers: StyleLayer[] = [
-      { id: 'poi-lbl', type: 'symbol', 'source-layer': 'poi' },
-    ];
+    const layers: StyleLayer[] = [{ id: 'poi-lbl', type: 'symbol', 'source-layer': 'poi' }];
     const { target, setPaint } = makeFakeMap(layers);
 
     boostBasemapContrast(target);
@@ -160,11 +154,9 @@ describe('boostBasemapContrast', () => {
       { id: 'broken-road', type: 'line', 'source-layer': 'transportation' },
       { id: 'good-road', type: 'line', 'source-layer': 'transportation' },
     ];
-    const setPaint = vi.fn<(layerId: string, prop: string, value: unknown) => void>(
-      (layerId) => {
-        if (layerId === 'broken-road') throw new Error('simulated paint failure');
-      },
-    );
+    const setPaint = vi.fn<(layerId: string, prop: string, value: unknown) => void>((layerId) => {
+      if (layerId === 'broken-road') throw new Error('simulated paint failure');
+    });
     const target: ContrastTarget = {
       getStyle: () => ({ layers }),
       getPaintProperty: () => 1,
