@@ -128,23 +128,10 @@ async function serveHistoryList(request: Request, url: URL, env: Env): Promise<R
     }
   }
 
-  // R2 list returns keys in ascending lexicographic order; since our keys are
-  // sortable timestamps, that's chronological. We list up to `limit` objects
-  // and reverse so the response is newest-first. For larger windows the
-  // client can paginate via `?limit=` up to HISTORY_MAX_LIMIT.
-  const listed = await env.SNAPSHOTS.list({
-    prefix: 'history/',
-    limit,
-  });
-
-  const snapshots = listed.objects
-    .map((o) => parseHistoryKey(o.key))
-    .filter((s): s is HistoryEntry => s !== null)
-    .reverse();
+  const snapshots = await listNewestHistoryEntries(env.SNAPSHOTS, limit);
 
   const body = JSON.stringify({
     snapshots,
-    truncated: listed.truncated,
     count: snapshots.length,
   });
 
@@ -154,6 +141,55 @@ async function serveHistoryList(request: Request, url: URL, env: Env): Promise<R
       'cache-control': LIST_CACHE_CONTROL,
     },
   });
+}
+
+/** Minimum surface of R2Bucket needed for listing — kept narrow for testability. */
+export type R2BucketListOnly = Pick<R2Bucket, 'list'>;
+
+/** R2 list page size — the per-page maximum the Workers runtime supports. */
+const R2_LIST_PAGE_SIZE = 1000;
+
+/**
+ * Return the newest `limit` history entries in descending chronological order.
+ *
+ * R2 only returns keys in ascending lexicographic order and has no native
+ * "list from the end" option. Naively listing with `limit: N` returns the
+ * OLDEST N keys, not the newest — which was a long-latent bug. We instead
+ * page through the full history/ listing and keep a rolling tail of the last
+ * `limit` entries.
+ *
+ * Cost: O(ceil(total_keys / R2_LIST_PAGE_SIZE)) list calls. At 30s ingest
+ * cadence this grows by ~2,880 keys/day, so we should add an R2 lifecycle
+ * rule to trim ancient history when the bucket gets large. Until then the
+ * call is cheap and bounded.
+ */
+export async function listNewestHistoryEntries(
+  bucket: R2BucketListOnly,
+  limit: number,
+): Promise<HistoryEntry[]> {
+  if (limit <= 0) return [];
+
+  const tail: HistoryEntry[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const page: R2Objects = await bucket.list({
+      prefix: 'history/',
+      limit: R2_LIST_PAGE_SIZE,
+      cursor,
+    });
+
+    for (const object of page.objects) {
+      const parsed = parseHistoryKey(object.key);
+      if (parsed === null) continue;
+      tail.push(parsed);
+      if (tail.length > limit) tail.shift();
+    }
+
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+
+  return tail.reverse();
 }
 
 interface HistoryEntry {
