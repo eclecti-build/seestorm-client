@@ -310,7 +310,6 @@ export default function WeatherMap() {
     m.setPaintProperty(currentLayerId, 'raster-opacity', 0);
 
     activeRadar.current = incoming;
-
   }, [mapReady, isLive, isForecast, forecastOffsetMin, sliderValue, history]);
 
   // Observation-layer visibility (alert polygons + storm-motion vectors).

@@ -4,7 +4,10 @@ import MapLegend from './MapLegend';
 import { WARNING_COLORS, type AlertTier } from '@/lib/alerts';
 
 function renderLegend(
-  props: Partial<{ hiddenTiers: ReadonlySet<AlertTier>; onToggleTier: (tier: AlertTier) => void }> = {},
+  props: Partial<{
+    hiddenTiers: ReadonlySet<AlertTier>;
+    onToggleTier: (tier: AlertTier) => void;
+  }> = {},
 ) {
   const onToggleTier = props.onToggleTier ?? vi.fn();
   const hiddenTiers = props.hiddenTiers ?? new Set<AlertTier>();
