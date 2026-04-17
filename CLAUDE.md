@@ -69,4 +69,4 @@ Non-profit severe weather visualization for Wisconsin communities.
 - [ ] No secrets, keys, tokens, or `.env*` contents in the diff
 - [ ] No `any` in TypeScript — use `unknown` + type guards
 - [ ] Tests updated or added for behavior changes
-- [ ] `npm run lint` and `npm test` pass locally
+- [ ] `npm run lint`, `npm run typecheck`, and `npm test` pass locally
