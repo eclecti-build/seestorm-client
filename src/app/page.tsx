@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import dynamic from "next/dynamic";
+import dynamic from 'next/dynamic';
 
-const WeatherMap = dynamic(() => import("@/components/WeatherMap"), {
+const WeatherMap = dynamic(() => import('@/components/WeatherMap'), {
   ssr: false,
   loading: () => (
     <div className="w-full h-screen bg-gray-950 flex items-center justify-center">

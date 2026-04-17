@@ -1,28 +1,28 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { useEffect, useRef, useState, useCallback } from 'react';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 
 // Warning color map by NWS event type
 const WARNING_COLORS: Record<string, string> = {
-  "Tornado Warning": "#FF0000",
-  "Tornado Watch": "#FFFF00",
-  "Severe Thunderstorm Warning": "#FFA500",
-  "Severe Thunderstorm Watch": "#DB7093",
-  "Flash Flood Warning": "#8B0000",
-  "Flash Flood Watch": "#2E8B57",
-  "Special Weather Statement": "#FFE4B5",
+  'Tornado Warning': '#FF0000',
+  'Tornado Watch': '#FFFF00',
+  'Severe Thunderstorm Warning': '#FFA500',
+  'Severe Thunderstorm Watch': '#DB7093',
+  'Flash Flood Warning': '#8B0000',
+  'Flash Flood Watch': '#2E8B57',
+  'Special Weather Statement': '#FFE4B5',
 };
 
 const WARNING_PRIORITY: Record<string, number> = {
-  "Tornado Warning": 0,
-  "Severe Thunderstorm Warning": 1,
-  "Flash Flood Warning": 2,
-  "Tornado Watch": 3,
-  "Severe Thunderstorm Watch": 4,
-  "Flash Flood Watch": 5,
-  "Special Weather Statement": 6,
+  'Tornado Warning': 0,
+  'Severe Thunderstorm Warning': 1,
+  'Flash Flood Warning': 2,
+  'Tornado Watch': 3,
+  'Severe Thunderstorm Watch': 4,
+  'Flash Flood Watch': 5,
+  'Special Weather Statement': 6,
 };
 
 // Wisconsin center coordinates
@@ -30,7 +30,7 @@ const WISCONSIN_CENTER: [number, number] = [-89.5, 44.5];
 const DEFAULT_ZOOM = 7;
 
 interface WeatherAlert {
-  type: "Feature";
+  type: 'Feature';
   properties: {
     event: string;
     headline: string;
@@ -46,7 +46,7 @@ interface WeatherAlert {
 }
 
 interface AlertsResponse {
-  type: "FeatureCollection";
+  type: 'FeatureCollection';
   features: WeatherAlert[];
 }
 
@@ -59,14 +59,11 @@ export default function WeatherMap() {
 
   const fetchAlerts = useCallback(async () => {
     try {
-      const response = await fetch(
-        "https://api.weather.gov/alerts/active?area=WI&status=actual",
-        {
-          headers: {
-            "User-Agent": "(seestorm.org, contact@seestorm.org)",
-          },
-        }
-      );
+      const response = await fetch('https://api.weather.gov/alerts/active?area=WI&status=actual', {
+        headers: {
+          'User-Agent': '(seestorm.org, contact@seestorm.org)',
+        },
+      });
       if (!response.ok) return;
 
       const data: AlertsResponse = await response.json();
@@ -77,11 +74,11 @@ export default function WeatherMap() {
         .sort(
           (a, b) =>
             (WARNING_PRIORITY[a.properties.event] ?? 99) -
-            (WARNING_PRIORITY[b.properties.event] ?? 99)
+            (WARNING_PRIORITY[b.properties.event] ?? 99),
         );
 
       const filtered: AlertsResponse = {
-        type: "FeatureCollection",
+        type: 'FeatureCollection',
         features: withGeometry,
       };
 
@@ -89,13 +86,13 @@ export default function WeatherMap() {
       setLastUpdated(new Date());
 
       // Update map source if it exists
-      if (map.current?.getSource("alerts")) {
-        (map.current.getSource("alerts") as maplibregl.GeoJSONSource).setData(
-          filtered as unknown as GeoJSON.FeatureCollection
+      if (map.current?.getSource('alerts')) {
+        (map.current.getSource('alerts') as maplibregl.GeoJSONSource).setData(
+          filtered as unknown as GeoJSON.FeatureCollection,
         );
       }
     } catch (err) {
-      console.error("Failed to fetch alerts:", err);
+      console.error('Failed to fetch alerts:', err);
     }
   }, []);
 
@@ -104,115 +101,115 @@ export default function WeatherMap() {
 
     const m = new maplibregl.Map({
       container: mapContainer.current,
-      style: "https://tiles.stadiamaps.com/styles/alidade_smooth_dark.json",
+      style: 'https://tiles.stadiamaps.com/styles/alidade_smooth_dark.json',
       center: WISCONSIN_CENTER,
       zoom: DEFAULT_ZOOM,
       attributionControl: {},
     });
 
-    m.addControl(new maplibregl.NavigationControl(), "top-right");
+    m.addControl(new maplibregl.NavigationControl(), 'top-right');
     m.addControl(
       new maplibregl.GeolocateControl({
         positionOptions: { enableHighAccuracy: true },
         trackUserLocation: true,
       }),
-      "top-right"
+      'top-right',
     );
 
-    m.on("load", () => {
+    m.on('load', () => {
       // Add radar overlay from Iowa Mesonet
-      m.addSource("radar", {
-        type: "raster",
+      m.addSource('radar', {
+        type: 'raster',
         tiles: [
-          "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png",
+          'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
         ],
         tileSize: 256,
-        attribution: "NEXRAD via Iowa Environmental Mesonet",
+        attribution: 'NEXRAD via Iowa Environmental Mesonet',
       });
 
       m.addLayer({
-        id: "radar-layer",
-        type: "raster",
-        source: "radar",
+        id: 'radar-layer',
+        type: 'raster',
+        source: 'radar',
         paint: {
-          "raster-opacity": 0.6,
+          'raster-opacity': 0.6,
         },
       });
 
       // Add alerts source (empty initially)
-      m.addSource("alerts", {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
+      m.addSource('alerts', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
       });
 
       // Warning polygon fills
       m.addLayer({
-        id: "alert-fills",
-        type: "fill",
-        source: "alerts",
+        id: 'alert-fills',
+        type: 'fill',
+        source: 'alerts',
         paint: {
-          "fill-color": [
-            "match",
-            ["get", "event"],
-            "Tornado Warning",
-            WARNING_COLORS["Tornado Warning"],
-            "Tornado Watch",
-            WARNING_COLORS["Tornado Watch"],
-            "Severe Thunderstorm Warning",
-            WARNING_COLORS["Severe Thunderstorm Warning"],
-            "Severe Thunderstorm Watch",
-            WARNING_COLORS["Severe Thunderstorm Watch"],
-            "Flash Flood Warning",
-            WARNING_COLORS["Flash Flood Warning"],
-            "Flash Flood Watch",
-            WARNING_COLORS["Flash Flood Watch"],
-            "#888888",
+          'fill-color': [
+            'match',
+            ['get', 'event'],
+            'Tornado Warning',
+            WARNING_COLORS['Tornado Warning'],
+            'Tornado Watch',
+            WARNING_COLORS['Tornado Watch'],
+            'Severe Thunderstorm Warning',
+            WARNING_COLORS['Severe Thunderstorm Warning'],
+            'Severe Thunderstorm Watch',
+            WARNING_COLORS['Severe Thunderstorm Watch'],
+            'Flash Flood Warning',
+            WARNING_COLORS['Flash Flood Warning'],
+            'Flash Flood Watch',
+            WARNING_COLORS['Flash Flood Watch'],
+            '#888888',
           ],
-          "fill-opacity": 0.25,
+          'fill-opacity': 0.25,
         },
       });
 
       // Warning polygon outlines
       m.addLayer({
-        id: "alert-outlines",
-        type: "line",
-        source: "alerts",
+        id: 'alert-outlines',
+        type: 'line',
+        source: 'alerts',
         paint: {
-          "line-color": [
-            "match",
-            ["get", "event"],
-            "Tornado Warning",
-            WARNING_COLORS["Tornado Warning"],
-            "Tornado Watch",
-            WARNING_COLORS["Tornado Watch"],
-            "Severe Thunderstorm Warning",
-            WARNING_COLORS["Severe Thunderstorm Warning"],
-            "Severe Thunderstorm Watch",
-            WARNING_COLORS["Severe Thunderstorm Watch"],
-            "Flash Flood Warning",
-            WARNING_COLORS["Flash Flood Warning"],
-            "Flash Flood Watch",
-            WARNING_COLORS["Flash Flood Watch"],
-            "#888888",
+          'line-color': [
+            'match',
+            ['get', 'event'],
+            'Tornado Warning',
+            WARNING_COLORS['Tornado Warning'],
+            'Tornado Watch',
+            WARNING_COLORS['Tornado Watch'],
+            'Severe Thunderstorm Warning',
+            WARNING_COLORS['Severe Thunderstorm Warning'],
+            'Severe Thunderstorm Watch',
+            WARNING_COLORS['Severe Thunderstorm Watch'],
+            'Flash Flood Warning',
+            WARNING_COLORS['Flash Flood Warning'],
+            'Flash Flood Watch',
+            WARNING_COLORS['Flash Flood Watch'],
+            '#888888',
           ],
-          "line-width": 2,
-          "line-opacity": 0.8,
+          'line-width': 2,
+          'line-opacity': 0.8,
         },
       });
 
       // Click handler for alert polygons
-      m.on("click", "alert-fills", (e) => {
+      m.on('click', 'alert-fills', (e) => {
         if (e.features && e.features[0]) {
           setSelectedAlert(e.features[0] as unknown as WeatherAlert);
         }
       });
 
-      m.on("mouseenter", "alert-fills", () => {
-        m.getCanvas().style.cursor = "pointer";
+      m.on('mouseenter', 'alert-fills', () => {
+        m.getCanvas().style.cursor = 'pointer';
       });
 
-      m.on("mouseleave", "alert-fills", () => {
-        m.getCanvas().style.cursor = "";
+      m.on('mouseleave', 'alert-fills', () => {
+        m.getCanvas().style.cursor = '';
       });
 
       // Fetch alerts immediately and then every 30 seconds
@@ -237,7 +234,7 @@ export default function WeatherMap() {
       {alerts && alerts.features.length > 0 && (
         <div className="absolute top-4 left-4 bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-lg">
           {alerts.features.length} active alert
-          {alerts.features.length !== 1 ? "s" : ""}
+          {alerts.features.length !== 1 ? 's' : ''}
         </div>
       )}
 
@@ -260,24 +257,18 @@ export default function WeatherMap() {
           <div
             className="text-xs font-bold uppercase tracking-wide mb-1"
             style={{
-              color:
-                WARNING_COLORS[selectedAlert.properties.event] ?? "#888888",
+              color: WARNING_COLORS[selectedAlert.properties.event] ?? '#888888',
             }}
           >
             {selectedAlert.properties.event}
           </div>
-          <div className="text-sm font-semibold mb-2">
-            {selectedAlert.properties.headline}
-          </div>
-          <div className="text-xs text-gray-300 mb-2">
-            {selectedAlert.properties.areaDesc}
-          </div>
+          <div className="text-sm font-semibold mb-2">{selectedAlert.properties.headline}</div>
+          <div className="text-xs text-gray-300 mb-2">{selectedAlert.properties.areaDesc}</div>
           <div className="text-xs text-gray-400 max-h-40 overflow-y-auto">
             {selectedAlert.properties.description}
           </div>
           <div className="text-xs text-gray-500 mt-2">
-            Expires:{" "}
-            {new Date(selectedAlert.properties.expires).toLocaleString()}
+            Expires: {new Date(selectedAlert.properties.expires).toLocaleString()}
           </div>
         </div>
       )}

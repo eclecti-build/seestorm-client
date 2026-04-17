@@ -1,0 +1,41 @@
+// Clerk auth middleware — SCAFFOLDED, NOT ACTIVE.
+//
+// TODO: To activate Clerk auth:
+//   1. Rename this file from `middleware.ts.example` to `middleware.ts`.
+//   2. Populate `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`
+//      in `.env.local` (see `.env.example`).
+//   3. Wrap the root layout (`src/app/layout.tsx`) in `<ClerkProvider>`.
+//   4. Define route matchers below (see `createRouteMatcher`) to mark
+//      which routes require authentication vs. are public.
+//   5. Uncomment the `clerkMiddleware` export and `config.matcher` below.
+//   6. Ship as a separate PR — do not bundle with unrelated work.
+//
+// Note: this project currently uses `output: "export"` (static export).
+// Middleware is NOT supported in static export mode. Activating Clerk
+// middleware will require moving to a server/edge runtime (e.g. deploying
+// via Cloudflare Pages with functions/adapter). Flag this architectural
+// change in the auth-wiring task.
+
+// import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+//
+// const isProtectedRoute = createRouteMatcher([
+//   // '/dashboard(.*)',
+//   // '/api/protected(.*)',
+// ]);
+//
+// export default clerkMiddleware(async (auth, req) => {
+//   if (isProtectedRoute(req)) {
+//     await auth.protect();
+//   }
+// });
+//
+// export const config = {
+//   matcher: [
+//     // Skip Next.js internals and all static files, unless found in search params
+//     '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
+//     // Always run for API routes
+//     '/(api|trpc)(.*)',
+//   ],
+// };
+
+export {};
