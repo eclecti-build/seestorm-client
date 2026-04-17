@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker/tsconfig.json",
+    "verify": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build",
     "deploy": "wrangler deploy",
     "deploy:preview": "wrangler versions upload",
     "cf:dev": "wrangler dev"

@@ -80,4 +80,4 @@ When that day comes, revisit auth with a specific use case — don't pre-commit 
 - [ ] No secrets, keys, tokens, or `.env*` contents in the diff
 - [ ] No `any` in TypeScript — use `unknown` + type guards
 - [ ] Tests updated or added for behavior changes
-- [ ] `npm run lint`, `npm run typecheck`, and `npm test` pass locally
+- [ ] `npm run verify` passes locally (chains the full CI gate: lint → format:check → typecheck → test → build, in the same order `.github/workflows/ci.yml` runs them). Use this instead of running the individual commands so we don't drift from CI.
