@@ -4,7 +4,9 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '@/lib/radar';
-import { buildMotionFeatures, setMotionVisibility, type StormMotion } from '@/lib/stormMotion';
+import { buildMotionFeatures, setMotionVisibility } from '@/lib/stormMotion';
+import ActiveAlertsPanel from './ActiveAlertsPanel';
+import type { ActiveAlert } from './alertTypes';
 
 // Warning color map by NWS event type
 const WARNING_COLORS: Record<string, string> = {
@@ -64,22 +66,11 @@ interface AlertsResponse {
 }
 
 // Ingest snapshot shape (from seestorm-ingest internal/publisher.Snapshot).
-// Intentionally different from the map-internal shape — we translate below.
-interface IngestAlert {
-  nws_id: string;
-  event_type: string;
-  severity: string;
-  headline: string;
-  description: string;
-  area_desc: string;
-  geometry: GeoJSON.Geometry | null;
-  effective_at: string;
-  expires_at: string;
-  // Optional — only populated for storm-based warnings that carry a parseable
-  // `TIME...MOT...LOC` block. Absent for watches, advisories, and county-wide
-  // products that have no tracked cell. Rendered on a separate motion source.
-  storm_motion?: StormMotion | null;
-}
+// Intentionally different from the map-internal shape — we translate below for
+// MapLibre, but keep the raw list around for the ActiveAlertsPanel so
+// zone-aggregate products (Tornado Watch, SVR Watch, county-wide FFAs) with
+// `geometry: null` still surface to the user.
+type IngestAlert = ActiveAlert;
 
 interface IngestSnapshot {
   generated_at: string;
@@ -104,6 +95,10 @@ interface HistoryResponse {
 // Snapshot transform
 // ---------------------------------------------------------------------------
 
+// Polygon-only projection into MapLibre FeatureCollection shape. Zone-aggregate
+// products (geometry === null) are intentionally excluded here — they can't be
+// drawn as polygons. Those alerts are surfaced through ActiveAlertsPanel
+// instead, which receives the full snapshot.alerts list.
 function snapshotToFeatures(snapshot: IngestSnapshot): AlertsResponse {
   const features: WeatherAlert[] = snapshot.alerts
     .filter((a): a is IngestAlert & { geometry: GeoJSON.Geometry } => a.geometry !== null)
@@ -138,7 +133,12 @@ export default function WeatherMap() {
   // staging layer — we load the next URL into it, then crossfade.
   const activeRadar = useRef<'a' | 'b'>('a');
 
-  const [alerts, setAlerts] = useState<AlertsResponse | null>(null);
+  // Full alert list (polygon + zone-only). Polygon features are pushed
+  // directly into the MapLibre source via renderFeatures — no React state
+  // needed for them. This list is what the ActiveAlertsPanel and the count
+  // badge consume, so Watches and other zone-aggregate products (no polygon)
+  // remain visible even though they can't be drawn on the map.
+  const [allAlerts, setAllAlerts] = useState<IngestAlert[]>([]);
   const [snapshotTime, setSnapshotTime] = useState<Date | null>(null);
   const [selectedAlert, setSelectedAlert] = useState<WeatherAlert | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -189,7 +189,7 @@ export default function WeatherMap() {
       if (!response.ok) return;
       const snapshot: IngestSnapshot = await response.json();
       const features = snapshotToFeatures(snapshot);
-      setAlerts(features);
+      setAllAlerts(snapshot.alerts);
       setSnapshotTime(new Date(snapshot.generated_at));
       renderFeatures(features);
       renderMotion(snapshot.alerts);
@@ -206,7 +206,7 @@ export default function WeatherMap() {
         if (!response.ok) return;
         const snapshot: IngestSnapshot = await response.json();
         const features = snapshotToFeatures(snapshot);
-        setAlerts(features);
+        setAllAlerts(snapshot.alerts);
         setSnapshotTime(new Date(snapshot.generated_at));
         renderFeatures(features);
         renderMotion(snapshot.alerts);
@@ -681,13 +681,25 @@ export default function WeatherMap() {
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
 
-      {/* Alert count badge */}
-      {alerts && alerts.features.length > 0 && (
+      {/* Alert count badge — counts ALL active alerts, including zone-aggregate
+          products (Watches) that don't render on the map. Previously this
+          reflected only polygon features, silently under-reporting Watches. */}
+      {allAlerts.length > 0 && (
         <div className="absolute top-4 left-4 bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-lg">
-          {alerts.features.length} active alert
-          {alerts.features.length !== 1 ? 's' : ''}
+          {allAlerts.length} active alert
+          {allAlerts.length !== 1 ? 's' : ''}
         </div>
       )}
+
+      {/* Active alerts list — surfaces every alert (polygon + zone-only).
+          Critical for Watches and other zone-aggregate products that have
+          no geometry and therefore don't appear on the map. */}
+      <ActiveAlertsPanel
+        alerts={allAlerts}
+        colors={WARNING_COLORS}
+        priority={WARNING_PRIORITY}
+        now={now}
+      />
 
       {/* Historical mode indicator — radar + alerts are NOT current */}
       {!isLive && !isForecast && (
