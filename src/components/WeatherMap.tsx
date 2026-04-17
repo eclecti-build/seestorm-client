@@ -30,6 +30,12 @@ const WARNING_PRIORITY: Record<string, number> = {
 const WISCONSIN_CENTER: [number, number] = [-89.5, 44.5];
 const DEFAULT_ZOOM = 7;
 
+// Radar animation tuning. These values balance responsiveness (slider feels
+// immediate) against smoothness (no visible popping during playback).
+const RADAR_OPACITY = 0.6;
+const CROSSFADE_MS = 300; // A↔B layer opacity crossfade
+const TILE_FADE_MS = 400; // MapLibre built-in in-tile fade
+
 // ---------------------------------------------------------------------------
 // Types matching the Worker + ingest contract
 // ---------------------------------------------------------------------------
@@ -123,6 +129,9 @@ function snapshotToFeatures(snapshot: IngestSnapshot): AlertsResponse {
 export default function WeatherMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
+  // Which radar layer is currently on top (fully visible). The other is the
+  // staging layer — we load the next URL into it, then crossfade.
+  const activeRadar = useRef<'a' | 'b'>('a');
 
   const [alerts, setAlerts] = useState<AlertsResponse | null>(null);
   const [snapshotTime, setSnapshotTime] = useState<Date | null>(null);
@@ -273,47 +282,49 @@ export default function WeatherMap() {
     setSliderValue((v) => Math.min(history.length + HRRR_FRAME_COUNT, v + 1));
   }, [history.length]);
 
-  // Swap the radar tile source to match slider state. MapLibre does not reliably
-  // update a raster source's `tiles` URL in place — the stock pattern is to
-  // remove the layer + source and re-create them. We keep the new radar layer
-  // below `alert-fills` so alert polygons stay on top.
+  // Crossfade the radar between frames.
+  //
+  // Push the next URL into the *inactive* raster source (so tiles start
+  // streaming in behind the current frame), then flip opacity on both
+  // layers. The currently-visible frame stays lit while the new one loads,
+  // so the user never sees a blank flash — the whole thing reads as smooth
+  // storm motion instead of a strobe.
+  //
+  // MapLibre's `RasterTileSource.setTiles()` triggers a tile reload without
+  // tearing down the source, which preserves the in-progress tile cache for
+  // zoom/pan interactions during scrubbing.
   useEffect(() => {
     if (!mapReady || !map.current) return;
     const m = map.current;
 
     let url: string;
-    let attribution: string;
     if (isForecast) {
       url = hrrrTileUrl(forecastOffsetMin);
-      attribution = 'HRRR model forecast via Iowa Environmental Mesonet';
     } else if (isLive) {
       url = radarTileUrl('live');
-      attribution = 'NEXRAD via Iowa Environmental Mesonet';
     } else {
       const entry = history[sliderValue];
       if (!entry) return;
       url = radarTileUrl(new Date(entry.generated_at));
-      attribution = 'NEXRAD via Iowa Environmental Mesonet';
     }
 
-    if (m.getLayer('radar-layer')) m.removeLayer('radar-layer');
-    if (m.getSource('radar')) m.removeSource('radar');
+    const current = activeRadar.current;
+    const incoming = current === 'a' ? 'b' : 'a';
+    const currentLayerId = `radar-${current}`;
+    const incomingLayerId = `radar-${incoming}`;
 
-    m.addSource('radar', {
-      type: 'raster',
-      tiles: [url],
-      tileSize: 256,
-      attribution,
-    });
-    m.addLayer(
-      {
-        id: 'radar-layer',
-        type: 'raster',
-        source: 'radar',
-        paint: { 'raster-opacity': 0.6 },
-      },
-      'alert-fills',
-    );
+    const incomingSource = m.getSource(incomingLayerId) as maplibregl.RasterTileSource | undefined;
+    if (!incomingSource) return;
+
+    // Start loading the next frame's tiles into the inactive (invisible) layer.
+    incomingSource.setTiles([url]);
+
+    // Crossfade — MapLibre animates these paint properties over CROSSFADE_MS
+    // thanks to the `raster-opacity-transition` we set at layer creation.
+    m.setPaintProperty(incomingLayerId, 'raster-opacity', RADAR_OPACITY);
+    m.setPaintProperty(currentLayerId, 'raster-opacity', 0);
+
+    activeRadar.current = incoming;
 
     // Alerts are observations of what IS happening; they have no meaning for
     // future frames. Hide the alert fill/outline layers entirely in forecast
@@ -354,19 +365,41 @@ export default function WeatherMap() {
     );
 
     m.on('load', () => {
-      m.addSource('radar', {
-        type: 'raster',
+      // Two alternating radar sources so we can crossfade between frames.
+      // Without this, each new tile URL produces a visible blank flash while
+      // MapLibre loads the new tiles. With two layers, the previous frame
+      // stays visible and fades out while the new one fades in on top —
+      // standard radar-loop animation technique.
+      const radarSourceOptions = {
+        type: 'raster' as const,
         tiles: [radarTileUrl('live')],
         tileSize: 256,
-        attribution: 'NEXRAD via Iowa Environmental Mesonet',
-      });
+        attribution: 'NEXRAD / HRRR via Iowa Environmental Mesonet',
+      };
+      m.addSource('radar-a', radarSourceOptions);
+      m.addSource('radar-b', radarSourceOptions);
 
       m.addLayer({
-        id: 'radar-layer',
+        id: 'radar-a',
         type: 'raster',
-        source: 'radar',
+        source: 'radar-a',
         paint: {
-          'raster-opacity': 0.6,
+          'raster-opacity': RADAR_OPACITY,
+          // 300ms crossfade between layer A and B on slider change
+          'raster-opacity-transition': { duration: CROSSFADE_MS },
+          // Built-in MapLibre tile fade-in — softens intra-source pop when
+          // tiles arrive at different times during network load.
+          'raster-fade-duration': TILE_FADE_MS,
+        },
+      });
+      m.addLayer({
+        id: 'radar-b',
+        type: 'raster',
+        source: 'radar-b',
+        paint: {
+          'raster-opacity': 0,
+          'raster-opacity-transition': { duration: CROSSFADE_MS },
+          'raster-fade-duration': TILE_FADE_MS,
         },
       });
 
