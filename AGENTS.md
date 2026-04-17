@@ -13,8 +13,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `main` auto-deploys; PRs get preview URLs. CI only gates quality.
 
 ## Auth
-- Clerk (`@clerk/nextjs`) — scaffolded, not wired.
-- Middleware stub lives at `src/middleware.ts.example`. Do not rename to `.ts` without an explicit auth-wiring task.
+- **None.** Public data is public. No sign-in gates the map, alerts, or storm paths.
+- Future opt-in features (photo/damage uploads, spotter reports, admin dashboard) may add auth — scoped narrowly when the use case lands. Do not pre-scaffold vendors.
 
 ## Commits
 - Conventional prefixes: `feat: fix: chore: docs: refactor: test:`.

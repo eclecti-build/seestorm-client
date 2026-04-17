@@ -14,7 +14,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clerk/nextjs": "^7.2.2",
     "@turf/turf": "^7.3.4",
     "@vis.gl/react-maplibre": "^8.1.1",
     "maplibre-gl": "^5.23.0",

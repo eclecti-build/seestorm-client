@@ -46,9 +46,14 @@ Non-profit severe weather visualization for Wisconsin communities.
 - CI in `.github/workflows/ci.yml` only gates quality (lint/typecheck/test/build); it does not deploy.
 
 ## Auth
-- **Clerk** via `@clerk/nextjs`.
-- Middleware is scaffolded but **not active**: see `src/middleware.ts.example`.
-- Activation (rename to `src/middleware.ts`, add route matchers, wire providers) is a separate architectural task — do not activate incidentally.
+**None.** SeeStorm's public viewing path is fully open — no sign-in required to view alerts, the map, radar, or storm paths. This is a product principle: public safety data must stay frictionless.
+
+Future features that might warrant **opt-in** user accounts (not blocking, never gating public data):
+- User-submitted damage photos / spotter reports
+- Post-event insurance assistance flows
+- Admin dashboard for volunteers/data corrections
+
+When that day comes, revisit auth with a specific use case — don't pre-commit to a vendor or an architectural pattern. See `../seestorm/docs/FUTURE.md` in the umbrella repo for the full list.
 
 ## Testing
 - **Vitest** with jsdom environment.
