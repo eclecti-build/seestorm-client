@@ -99,9 +99,16 @@ export default function WeatherMap() {
   useEffect(() => {
     if (!mapContainer.current) return;
 
+    // Basemap style: defaults to CartoDB Dark Matter (free, no-key, works from any
+    // origin, and matches the dark SeeStorm theme). Override via NEXT_PUBLIC_MAP_STYLE_URL
+    // when self-hosting Protomaps on R2 or using a keyed Stadia Maps style.
+    const mapStyle =
+      process.env.NEXT_PUBLIC_MAP_STYLE_URL ||
+      'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+
     const m = new maplibregl.Map({
       container: mapContainer.current,
-      style: 'https://tiles.stadiamaps.com/styles/alidade_smooth_dark.json',
+      style: mapStyle,
       center: WISCONSIN_CENTER,
       zoom: DEFAULT_ZOOM,
       attributionControl: {},
