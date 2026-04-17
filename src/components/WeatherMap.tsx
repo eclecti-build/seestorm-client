@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import * as turf from '@turf/turf';
 import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '@/lib/radar';
 import { buildMotionFeatures, setMotionVisibility } from '@/lib/stormMotion';
 import {
@@ -16,6 +17,7 @@ import {
   type WeatherAlert,
 } from '@/lib/alerts';
 import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
+import { boostBasemapContrast } from '@/lib/mapContrast';
 import AlertsPanel from './AlertsPanel';
 import MapLegend from './MapLegend';
 
@@ -113,6 +115,49 @@ export default function WeatherMap() {
   const isLive = !isForecast && (history.length === 0 || sliderValue === history.length);
   // Minutes ahead of now for the current forecast frame (0 when not forecasting).
   const forecastOffsetMin = isForecast ? (sliderValue - history.length) * HRRR_STEP_MINUTES : 0;
+
+  // Select an alert AND pan/zoom the map to its geometry. Wired to the
+  // AlertsPanel card click so the map jumps to the area the user wants to
+  // see — critical for zone-aggregate Watches that cover whole counties the
+  // user may not currently have in view.
+  //
+  // Deliberately NOT used by the map's own polygon click handler: if a user
+  // clicks a polygon on the map, they're already looking at it; recentering
+  // would yank the viewport they just oriented themselves in.
+  //
+  // Zone-only alerts without hydrated geometry (Watches that arrived before
+  // the county lookup finished loading) just select — no jump — which
+  // matches user expectation (nothing to fly to).
+  const focusAlert = useCallback((alert: WeatherAlert) => {
+    setSelectedAlert(alert);
+    const m = map.current;
+    if (!m || !alert.geometry) return;
+    try {
+      // turf.bbox returns [minX, minY, maxX, maxY] for 2D geometries — NWS
+      // alert polygons are always 2D, so the 4-element form is safe.
+      const [minX, minY, maxX, maxY] = turf.bbox(alert.geometry);
+      // For a degenerate bbox (single-point alert) fitBounds would throw or
+      // zoom to max — flyTo with a sane zoom keeps the UX predictable.
+      if (minX === maxX && minY === maxY) {
+        m.flyTo({
+          center: [minX, minY],
+          zoom: Math.max(m.getZoom(), 9),
+          duration: 800,
+        });
+        return;
+      }
+      m.fitBounds(
+        [
+          [minX, minY],
+          [maxX, maxY],
+        ],
+        { padding: 80, maxZoom: 10, duration: 800 },
+      );
+    } catch (err) {
+      // Malformed geometry shouldn't break the click — just skip the pan.
+      console.error('Failed to center map on alert:', err);
+    }
+  }, []);
 
   // Paint a FeatureCollection onto the map's alerts source.
   const renderFeatures = useCallback((features: AlertsResponse) => {
@@ -372,6 +417,11 @@ export default function WeatherMap() {
     );
 
     m.on('load', () => {
+      // Lift roads and place labels out from under the radar + alert overlays.
+      // Runs once, before any of our own layers are added, so we only walk the
+      // basemap's own layers and don't compound-boost on re-render.
+      boostBasemapContrast(m);
+
       // Two alternating radar sources so we can crossfade between frames.
       // Without this, each new tile URL produces a visible blank flash while
       // MapLibre loads the new tiles. With two layers, the previous frame
@@ -435,9 +485,11 @@ export default function WeatherMap() {
         type: 'line',
         source: 'admin-counties',
         paint: {
-          'line-color': '#6b7280',
-          'line-width': 0.6,
-          'line-opacity': 0.35,
+          // Lightened from #6b7280 / 0.6 / 0.35 — with radar + alert fills
+          // stacked on top, the old values washed out at typical zooms.
+          'line-color': '#9ca3af',
+          'line-width': 1,
+          'line-opacity': 0.6,
         },
       });
       m.addLayer({
@@ -445,9 +497,12 @@ export default function WeatherMap() {
         type: 'line',
         source: 'admin-states',
         paint: {
-          'line-color': '#9ca3af',
-          'line-width': 1.2,
-          'line-opacity': 0.55,
+          // Bumped from #9ca3af / 1.2 / 0.55. State borders are the highest-
+          // value geographic reference when a storm crosses WI/MN/IL lines,
+          // so we want them unambiguously readable through the overlays.
+          'line-color': '#e5e7eb',
+          'line-width': 1.8,
+          'line-opacity': 0.8,
         },
       });
 
@@ -773,7 +828,7 @@ export default function WeatherMap() {
           drives the same selectedAlert popup the map polygons do. */}
       <AlertsPanel
         alerts={allAlerts}
-        onSelect={setSelectedAlert}
+        onSelect={focusAlert}
         selectedId={selectedAlert?.properties.nwsId ?? null}
         now={now}
       />

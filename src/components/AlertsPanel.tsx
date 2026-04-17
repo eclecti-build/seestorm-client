@@ -148,6 +148,13 @@ export default function AlertsPanel({
   // cleanly whenever the upstream snapshot changes.
   const groups = useMemo(() => groupByFamily(alerts), [alerts]);
 
+  // Whole-panel collapse — during a multi-product outbreak the panel can
+  // dominate the viewport even with per-family accordions, so the user can
+  // fold it down to just the count badge. Session-only state; a reload
+  // restores the expanded default because the typical reason to open the
+  // app is to SEE the alerts.
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
   // Relative-expiry labels need a "now" that ticks, but Date.now() in render
   // is impure. Lazy-initialize once, then re-tick every 30s via effect so the
   // "in Xm" strings stay fresh without re-fetching anything.
@@ -174,23 +181,42 @@ export default function AlertsPanel({
 
   return (
     <div
-      className="absolute top-16 left-4 w-80 max-w-[calc(100vw-2rem)] max-h-[60vh] overflow-y-auto bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 p-2 space-y-2"
+      className={`absolute top-16 left-4 w-80 max-w-[calc(100vw-2rem)] bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 p-2 ${
+        isCollapsed ? '' : 'max-h-[60vh] overflow-y-auto space-y-2'
+      }`}
       role="region"
       aria-label="Active alerts"
     >
-      <div className="px-1 pt-1 pb-0.5 text-[11px] uppercase tracking-wide text-gray-400">
-        Active alerts ({alerts.length})
+      <div className="flex items-center justify-between px-1 pt-1 pb-0.5">
+        <span className="text-[11px] uppercase tracking-wide text-gray-400">
+          Active alerts ({alerts.length})
+        </span>
+        <button
+          type="button"
+          onClick={() => setIsCollapsed((c) => !c)}
+          aria-expanded={!isCollapsed}
+          aria-controls="alerts-panel-body"
+          aria-label={isCollapsed ? 'Expand alerts panel' : 'Collapse alerts panel'}
+          className="text-gray-400 hover:text-white text-xs leading-none px-1.5 py-0.5 rounded hover:bg-gray-800"
+          title={isCollapsed ? 'Expand' : 'Collapse'}
+        >
+          {isCollapsed ? '▸' : '▾'}
+        </button>
       </div>
-      {groups.map(({ family, alerts: famAlerts }) => (
-        <FamilySection
-          key={family}
-          family={family}
-          alerts={famAlerts}
-          selectedId={selectedId}
-          onSelect={onSelect}
-          now={effectiveNow}
-        />
-      ))}
+      {!isCollapsed && (
+        <div id="alerts-panel-body" className="space-y-2">
+          {groups.map(({ family, alerts: famAlerts }) => (
+            <FamilySection
+              key={family}
+              family={family}
+              alerts={famAlerts}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              now={effectiveNow}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

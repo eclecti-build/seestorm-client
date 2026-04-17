@@ -156,4 +156,33 @@ describe('<AlertsPanel />', () => {
     // expires_at is 30m after FIXED_NOW.
     expect(screen.getByText(/expires in 30m/i)).toBeInTheDocument();
   });
+
+  it('collapses and re-expands the whole panel via the header toggle', () => {
+    const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
+    render(<AlertsPanel alerts={[tornado]} onSelect={() => {}} now={FIXED_NOW} />);
+
+    // Expanded by default — family section visible.
+    expect(screen.getByRole('group')).toBeInTheDocument();
+
+    const toggle = screen.getByRole('button', { name: /collapse alerts panel/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(toggle);
+
+    // After collapse: family section gone, header button flipped state.
+    expect(screen.queryByRole('group')).not.toBeInTheDocument();
+    const expandToggle = screen.getByRole('button', { name: /expand alerts panel/i });
+    expect(expandToggle).toHaveAttribute('aria-expanded', 'false');
+
+    // Re-expand restores the groups.
+    fireEvent.click(expandToggle);
+    expect(screen.getByRole('group')).toBeInTheDocument();
+  });
+
+  it('keeps the empty-state rendering unchanged (no collapse toggle when there are no alerts)', () => {
+    render(<AlertsPanel alerts={[]} onSelect={() => {}} now={FIXED_NOW} />);
+    expect(
+      screen.queryByRole('button', { name: /collapse alerts panel/i }),
+    ).not.toBeInTheDocument();
+  });
 });
