@@ -10,6 +10,7 @@ import {
   WARNING_COLORS,
   colorForEvent,
   type AlertsResponse,
+  type AlertTier,
   type IngestSnapshot,
   type IngestAlert,
   type WeatherAlert,
@@ -86,6 +87,19 @@ export default function WeatherMap() {
   // the oldest frame; reaching the end wraps to 0 (radar-loop convention).
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [playSpeed, setPlaySpeed] = useState<1 | 2 | 4>(1);
+  // Per-tier map layer toggles driven by MapLegend. Hiding a tier removes
+  // its polygons from the map while the side panel keeps listing them —
+  // users never lose situational awareness, just visual clutter. Session-
+  // only; a page reload restores all tiers.
+  const [hiddenTiers, setHiddenTiers] = useState<Set<AlertTier>>(() => new Set());
+  const toggleTier = useCallback((tier: AlertTier) => {
+    setHiddenTiers((prev) => {
+      const next = new Set(prev);
+      if (next.has(tier)) next.delete(tier);
+      else next.add(tier);
+      return next;
+    });
+  }, []);
   // `now` is a ticking reference time used only for rendering "Xm ago" labels.
   // Kept in state (not read directly via Date.now() in render) so React 19's
   // purity lint stays happy and re-renders only fire at the cadence we choose.
@@ -297,27 +311,38 @@ export default function WeatherMap() {
 
     activeRadar.current = incoming;
 
-    // Alerts are observations of what IS happening; they have no meaning for
-    // future frames. Hide the tiered alert layers entirely in forecast mode
-    // so users can't confuse a model projection with an NWS warning.
-    const alertVisibility = isForecast ? 'none' : 'visible';
-    const alertLayerIds = [
-      'alert-fills-warning',
-      'alert-fills-watch',
-      'alert-fills-advisory',
-      'alert-outlines-warning',
-      'alert-outlines-watch',
-      'alert-outlines-advisory',
-    ];
-    for (const layerId of alertLayerIds) {
-      if (m.getLayer(layerId)) m.setLayoutProperty(layerId, 'visibility', alertVisibility);
-    }
-    // Motion layers follow the same gating — a motion vector is an observation
-    // of a storm's current velocity, which has no meaning when the user has
-    // scrubbed into a model forecast frame. Driven from MOTION_LAYER_IDS so
-    // adding a new motion layer automatically stays hooked up.
-    setMotionVisibility(m, !isForecast);
   }, [mapReady, isLive, isForecast, forecastOffsetMin, sliderValue, history]);
+
+  // Observation-layer visibility (alert polygons + storm-motion vectors).
+  // Kept separate from the radar-frame effect so a legend tier toggle
+  // never incidentally triggers a radar crossfade or tile reload.
+  //
+  // Two gates stack:
+  //   1. Forecast mode hides EVERY tier plus motion — alerts and motion are
+  //      observations of what IS happening and have no meaning in a model
+  //      projection frame.
+  //   2. User tier toggles (from MapLegend) hide individual alert tiers so
+  //      stacked watches/advisories don't muddy the map.
+  // Layers stay mounted in both cases so we can flip visibility back on
+  // without rebuilding the source or re-running paint expressions.
+  useEffect(() => {
+    if (!mapReady) return;
+    const m = map.current;
+    if (!m) return;
+
+    const tierLayers: ReadonlyArray<{ tier: AlertTier; ids: readonly string[] }> = [
+      { tier: 'Warning', ids: ['alert-fills-warning', 'alert-outlines-warning'] },
+      { tier: 'Watch', ids: ['alert-fills-watch', 'alert-outlines-watch'] },
+      { tier: 'Advisory', ids: ['alert-fills-advisory', 'alert-outlines-advisory'] },
+    ];
+    for (const { tier, ids } of tierLayers) {
+      const visibility = isForecast || hiddenTiers.has(tier) ? 'none' : 'visible';
+      for (const id of ids) {
+        if (m.getLayer(id)) m.setLayoutProperty(id, 'visibility', visibility);
+      }
+    }
+    setMotionVisibility(m, !isForecast);
+  }, [mapReady, isForecast, hiddenTiers]);
 
   // Map init.
   useEffect(() => {
@@ -756,7 +781,7 @@ export default function WeatherMap() {
 
       {/* Static legend — collapsed by default; explains polygon tiers + motion
           vector glyphs so new users can read the map without an onboarding. */}
-      <MapLegend />
+      <MapLegend hiddenTiers={hiddenTiers} onToggleTier={toggleTier} />
 
       {/* Historical mode indicator — radar + alerts are NOT current */}
       {!isLive && !isForecast && (
