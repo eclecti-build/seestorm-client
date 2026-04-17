@@ -2,9 +2,14 @@
 //
 // Kept pure (no React, no MapLibre, no fetch) so unit tests can exercise the
 // full data path without a DOM or network. WeatherMap.tsx and AlertsPanel.tsx
-// both consume `buildAlertViews` — the map gets only geometry-bearing alerts
-// (so polygons render correctly), the side panel gets every alert (so
-// county-wide watches without polygons still show up in the UI).
+// both consume `buildAlertViews`:
+//   - the side panel gets every alert so county-wide watches without polygons
+//     still show up in the UI;
+//   - the map gets geometry-bearing alerts directly, PLUS any zone-only alerts
+//     whose `area_desc` county names could be resolved against the bundled
+//     county GeoJSON (see `countyGeometry.ts`). This keeps Tornado Watches
+//     visible on the map as multi-county fills even though NWS ships them
+//     without polygon geometry.
 
 // ---------------------------------------------------------------------------
 // Palette
@@ -101,6 +106,7 @@ export function resolveAlertUrl(params: {
 // ---------------------------------------------------------------------------
 
 import type { StormMotion } from './stormMotion';
+import { synthesizeGeometryFromAreaDesc, type CountyLookup } from './countyGeometry';
 
 // Ingest snapshot shape (from seestorm-ingest internal/publisher.Snapshot).
 // `url` is optional/additive — older snapshots without it still flow through
@@ -185,19 +191,34 @@ function byPriority(a: WeatherAlert, b: WeatherAlert): number {
 /**
  * Split one ingest snapshot into:
  *   - `mapFeatures` — FeatureCollection suitable for MapLibre's alerts source.
- *                     Only alerts with geometry are included; they're the ones
- *                     that can render as polygons. Same contract the map has
- *                     always had — the polygon render path is untouched.
+ *                     Polygon-bearing alerts pass through unchanged. When a
+ *                     `countyLookup` is supplied, zone-only alerts (geometry
+ *                     === null) get a synthesized MultiPolygon built from
+ *                     their `area_desc` county names; if nothing resolves,
+ *                     they stay off the map.
  *   - `listAlerts`  — every alert (with or without geometry), sorted by
- *                     priority. Feeds the side panel so county-wide watches
- *                     without polygons stay visible to the user.
+ *                     priority. Feeds the side panel so zone-only alerts
+ *                     stay visible even when hydration misses.
  */
-export function buildAlertViews(snapshot: IngestSnapshot): {
+export function buildAlertViews(
+  snapshot: IngestSnapshot,
+  options: { countyLookup?: CountyLookup } = {},
+): {
   mapFeatures: AlertsResponse;
   listAlerts: WeatherAlert[];
 } {
+  const { countyLookup } = options;
   const allAlerts = snapshot.alerts.map(ingestToWeatherAlert).sort(byPriority);
-  const mapAlerts = allAlerts.filter((a) => a.geometry !== null);
+  const mapAlerts: WeatherAlert[] = [];
+  for (const alert of allAlerts) {
+    if (alert.geometry !== null) {
+      mapAlerts.push(alert);
+      continue;
+    }
+    if (!countyLookup) continue;
+    const synthesized = synthesizeGeometryFromAreaDesc(alert.properties.areaDesc, countyLookup);
+    if (synthesized) mapAlerts.push({ ...alert, geometry: synthesized });
+  }
   return {
     mapFeatures: { type: 'FeatureCollection', features: mapAlerts },
     listAlerts: allAlerts,

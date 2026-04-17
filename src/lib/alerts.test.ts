@@ -13,6 +13,7 @@ import {
   type IngestAlert,
   type IngestSnapshot,
 } from './alerts';
+import { buildCountyLookup } from './countyGeometry';
 
 const STUB_GEOMETRY: GeoJSON.Geometry = {
   type: 'Polygon',
@@ -164,6 +165,57 @@ describe('buildAlertViews', () => {
     );
     expect(out.mapFeatures.features.map((f) => f.properties.nwsId)).toEqual(['POLY']);
     expect(out.listAlerts.map((a) => a.properties.nwsId).sort()).toEqual(['COUNTY_WATCH', 'POLY']);
+  });
+
+  it('hydrates zone-only alerts onto the map when a countyLookup resolves area_desc', () => {
+    const daneCountyFC: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { NAME: 'Dane' },
+          geometry: STUB_GEOMETRY,
+        },
+      ],
+    };
+    const countyLookup = buildCountyLookup(daneCountyFC);
+    const out = buildAlertViews(
+      snap([
+        ingest({
+          nws_id: 'WATCH',
+          event_type: 'Tornado Watch',
+          area_desc: 'Dane, WI',
+          geometry: null,
+        }),
+        ingest({
+          nws_id: 'UNKNOWN',
+          event_type: 'Tornado Watch',
+          area_desc: 'Somewhere Else, WI',
+          geometry: null,
+        }),
+      ]),
+      { countyLookup },
+    );
+    expect(out.mapFeatures.features.map((f) => f.properties.nwsId)).toEqual(['WATCH']);
+    // Both alerts stay in the side panel regardless of hydration success.
+    expect(out.listAlerts.map((a) => a.properties.nwsId).sort()).toEqual(['UNKNOWN', 'WATCH']);
+    // Hydrated feature carries a synthesized MultiPolygon.
+    expect(out.mapFeatures.features[0].geometry?.type).toBe('MultiPolygon');
+  });
+
+  it('leaves zone-only alerts off the map when no countyLookup is supplied', () => {
+    const out = buildAlertViews(
+      snap([
+        ingest({
+          nws_id: 'WATCH',
+          event_type: 'Tornado Watch',
+          area_desc: 'Dane, WI',
+          geometry: null,
+        }),
+      ]),
+    );
+    expect(out.mapFeatures.features).toHaveLength(0);
+    expect(out.listAlerts).toHaveLength(1);
   });
 
   it('list sort is stable by priority (warnings first, then watches)', () => {

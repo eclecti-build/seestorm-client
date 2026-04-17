@@ -14,6 +14,7 @@ import {
   type IngestAlert,
   type WeatherAlert,
 } from '@/lib/alerts';
+import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import AlertsPanel from './AlertsPanel';
 import MapLegend from './MapLegend';
 
@@ -53,6 +54,19 @@ export default function WeatherMap() {
   // Which radar layer is currently on top (fully visible). The other is the
   // staging layer — we load the next URL into it, then crossfade.
   const activeRadar = useRef<'a' | 'b'>('a');
+
+  // County-name → polygon lookup, populated once the bundled counties
+  // GeoJSON finishes loading. Used to hydrate zone-only alerts (Tornado
+  // Watches, etc.) with synthesized geometry so they render on the map.
+  // Null until load completes — callers of buildAlertViews pass it
+  // through optionally, so pre-load snapshots still render polygon alerts.
+  const countyLookupRef = useRef<CountyLookup | null>(null);
+  // Mirror of "refetch whichever frame the user is currently viewing".
+  // Kept in a ref so async handlers outside React's dependency graph (e.g.
+  // the counties-loaded callback in the map `load` handler) can hydrate the
+  // current frame without hardcoding the live path — scrubbing to history
+  // before counties finish loading must NOT get clobbered with live data.
+  const refreshCurrentFrameRef = useRef<(() => void) | null>(null);
 
   // Full alert list (polygon + zone-only). Polygon features are pushed
   // directly into the MapLibre source via renderFeatures — no React state
@@ -109,7 +123,9 @@ export default function WeatherMap() {
       const response = await fetch('/v1/active-events.json');
       if (!response.ok) return;
       const snapshot: IngestSnapshot = await response.json();
-      const { mapFeatures, listAlerts } = buildAlertViews(snapshot);
+      const { mapFeatures, listAlerts } = buildAlertViews(snapshot, {
+        countyLookup: countyLookupRef.current ?? undefined,
+      });
       setAllAlerts(listAlerts);
       setSnapshotTime(new Date(snapshot.generated_at));
       renderFeatures(mapFeatures);
@@ -126,7 +142,9 @@ export default function WeatherMap() {
         const response = await fetch(`/v1/history/${ts}`);
         if (!response.ok) return;
         const snapshot: IngestSnapshot = await response.json();
-        const { mapFeatures, listAlerts } = buildAlertViews(snapshot);
+        const { mapFeatures, listAlerts } = buildAlertViews(snapshot, {
+          countyLookup: countyLookupRef.current ?? undefined,
+        });
         setAllAlerts(listAlerts);
         setSnapshotTime(new Date(snapshot.generated_at));
         renderFeatures(mapFeatures);
@@ -137,6 +155,22 @@ export default function WeatherMap() {
     },
     [renderFeatures, renderMotion],
   );
+
+  // Keep `refreshCurrentFrameRef` pointed at a closure that re-fetches the
+  // frame the user is *currently* looking at — live snapshot when on live,
+  // the active historical snapshot otherwise. The counties-loaded callback
+  // calls through this so hydrating late-arriving county polygons never
+  // replaces a user-selected historical frame with live data.
+  useEffect(() => {
+    refreshCurrentFrameRef.current = () => {
+      if (isLive) {
+        void fetchLive();
+        return;
+      }
+      const entry = history[sliderValue];
+      if (entry) void fetchHistorical(entry.ts);
+    };
+  }, [isLive, sliderValue, history, fetchLive, fetchHistorical]);
 
   // Fetch the history index from the Worker.
   const fetchHistory = useCallback(async () => {
@@ -410,6 +444,14 @@ export default function WeatherMap() {
             (m.getSource('admin-counties') as maplibregl.GeoJSONSource | undefined)?.setData(
               counties,
             );
+            // Build the county-name lookup once so zone-only alerts
+            // (Tornado Watches) can be hydrated into MapLibre-drawable
+            // polygons. Dispatch through `refreshCurrentFrameRef` rather
+            // than hardcoding fetchLive — the user may have scrubbed to
+            // history while counties were loading, and we must not
+            // overwrite their selected frame with live data.
+            countyLookupRef.current = buildCountyLookup(counties);
+            refreshCurrentFrameRef.current?.();
           }
         } catch (err) {
           console.error('Failed to load admin boundaries:', err);
