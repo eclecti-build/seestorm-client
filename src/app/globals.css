@@ -1,9 +1,36 @@
 @import 'tailwindcss';
 
+/*
+ * SeeStorm brand tokens.  Mirror of brand/tokens/colors.css in the umbrella
+ * repo.  Used by ChromeOverlay and any non-alert UI surface.  NWS severity
+ * colors are defined in src/lib/alerts.ts and must not be overridden here.
+ */
+:root {
+  --ss-bg: #0a0f1a;
+  --ss-surface: #111827;
+  --ss-overlay: #1f2937;
+  --ss-ink: #e5e7eb;
+  --ss-muted: #94a3b8;
+  --ss-faint: #64748b;
+  --ss-border: #1f2937;
+  --ss-primary: #38bdf8;
+  --ss-primary-hover: #7dd3fc;
+}
+
 html,
 body {
   height: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
+  font-family:
+    var(--font-geist-sans),
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+/* About / informational routes may opt out of the no-scroll map lockdown */
+body.ss-scroll {
+  overflow: auto;
 }

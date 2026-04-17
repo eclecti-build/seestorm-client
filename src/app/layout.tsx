@@ -1,18 +1,42 @@
-import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import type { Metadata, Viewport } from 'next';
+import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 
-const inter = Inter({ subsets: ['latin'] });
+const geistSans = Geist({
+  variable: '--font-geist-sans',
+  subsets: ['latin'],
+});
+
+const geistMono = Geist_Mono({
+  variable: '--font-geist-mono',
+  subsets: ['latin'],
+});
 
 export const metadata: Metadata = {
-  title: 'SeeStorm — Wisconsin Severe Weather',
+  metadataBase: new URL('https://seestorm.pages.dev'),
+  applicationName: 'SeeStorm',
+  title: {
+    default: 'SeeStorm — Wisconsin Severe Weather',
+    template: '%s — SeeStorm',
+  },
   description:
-    'Ad-free, real-time severe weather visualization for Wisconsin communities. Tornado warnings, radar, and storm tracking.',
+    'Ad-free, real-time severe weather visualization for Wisconsin communities. Built on National Weather Service data.',
   openGraph: {
     title: 'SeeStorm — Wisconsin Severe Weather',
-    description: 'Ad-free, real-time severe weather visualization for Wisconsin communities.',
+    description:
+      'Ad-free, real-time severe weather visualization for Wisconsin communities. Built on National Weather Service data.',
+    siteName: 'SeeStorm',
+    locale: 'en_US',
     type: 'website',
   },
+  manifest: '/manifest.webmanifest',
+};
+
+export const viewport: Viewport = {
+  themeColor: '#0A0F1A',
+  colorScheme: 'dark',
+  width: 'device-width',
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -21,8 +45,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} antialiased bg-gray-950`}>{children}</body>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+      <body className="antialiased bg-gray-950">{children}</body>
     </html>
   );
 }

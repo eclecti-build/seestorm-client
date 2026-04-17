@@ -2,6 +2,18 @@
   "name": "seestorm",
   "version": "0.1.0",
   "private": true,
+  "description": "Ad-free, real-time severe weather visualization for Wisconsin communities. Built on NWS data by eclecti-build.",
+  "author": "eclecti-build <sean@eclecti-build.com> (https://eclecti-build.com)",
+  "license": "MIT",
+  "homepage": "https://github.com/eclecti-build/seestorm-client#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eclecti-build/seestorm-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eclecti-build/seestorm-client/issues",
+    "email": "sean@eclecti-build.com"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

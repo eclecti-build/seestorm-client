@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import ChromeOverlay from '@/components/ChromeOverlay';
 
 const WeatherMap = dynamic(() => import('@/components/WeatherMap'), {
   ssr: false,
@@ -13,8 +14,9 @@ const WeatherMap = dynamic(() => import('@/components/WeatherMap'), {
 
 export default function Home() {
   return (
-    <main className="w-full h-screen">
+    <main className="relative w-full h-screen">
       <WeatherMap />
+      <ChromeOverlay />
     </main>
   );
 }

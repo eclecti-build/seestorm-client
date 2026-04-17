@@ -153,7 +153,15 @@ export default function AlertsPanel({
   // fold it down to just the count badge. Session-only state; a reload
   // restores the expanded default because the typical reason to open the
   // app is to SEE the alerts.
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  //
+  // On mobile (<768px) we start collapsed so the map wins the viewport —
+  // the panel covers most of the screen on a phone and the user can opt in
+  // by tapping the header. SSR-safe: this component only renders under
+  // dynamic(ssr:false), so `window` is defined at first paint.
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth < 768;
+  });
 
   // Relative-expiry labels need a "now" that ticks, but Date.now() in render
   // is impure. Lazy-initialize once, then re-tick every 30s via effect so the
@@ -187,22 +195,22 @@ export default function AlertsPanel({
       role="region"
       aria-label="Active alerts"
     >
-      <div className="flex items-center justify-between px-1 pt-1 pb-0.5">
+      <button
+        type="button"
+        onClick={() => setIsCollapsed((c) => !c)}
+        aria-expanded={!isCollapsed}
+        aria-controls="alerts-panel-body"
+        aria-label={isCollapsed ? 'Expand alerts panel' : 'Collapse alerts panel'}
+        title={isCollapsed ? 'Expand' : 'Collapse'}
+        className="w-full flex items-center justify-between px-1.5 py-1 text-left rounded hover:bg-gray-800 transition-colors"
+      >
         <span className="text-[11px] uppercase tracking-wide text-gray-400">
           Active alerts ({alerts.length})
         </span>
-        <button
-          type="button"
-          onClick={() => setIsCollapsed((c) => !c)}
-          aria-expanded={!isCollapsed}
-          aria-controls="alerts-panel-body"
-          aria-label={isCollapsed ? 'Expand alerts panel' : 'Collapse alerts panel'}
-          className="text-gray-400 hover:text-white text-xs leading-none px-1.5 py-0.5 rounded hover:bg-gray-800"
-          title={isCollapsed ? 'Expand' : 'Collapse'}
-        >
+        <span aria-hidden="true" className="text-gray-400 text-xs leading-none px-1.5 py-0.5">
           {isCollapsed ? '▸' : '▾'}
-        </button>
-      </div>
+        </span>
+      </button>
       {!isCollapsed && (
         <div id="alerts-panel-body" className="space-y-2">
           {groups.map(({ family, alerts: famAlerts }) => (
