@@ -22,14 +22,24 @@ export interface Env {
   ASSETS: Fetcher;
 }
 
-/** Short edge cache for the live endpoint — ingest rewrites every 30s. */
-const LIVE_CACHE_CONTROL = 'public, max-age=10, s-maxage=10';
+/**
+ * Edge cache for the live endpoint. Ingest rewrites the snapshot every 30s,
+ * so a 10s TTL guaranteed a cache miss on every ~3rd client poll and hammered
+ * R2. Align the TTL to the producer cadence so at most one R2 GET per edge
+ * PoP per 30s window, regardless of how many users are watching.
+ */
+const LIVE_CACHE_CONTROL = 'public, max-age=30, s-maxage=30';
 
 /** Historical snapshots are immutable once written — cache for a year. */
 const HISTORY_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
-/** History list metadata — short cache so new snapshots appear promptly. */
-const LIST_CACHE_CONTROL = 'public, max-age=10, s-maxage=10';
+/**
+ * History list metadata. The list only changes when a new snapshot is written
+ * (every 30s), and listing is an R2 class-A op that pages the full history/
+ * prefix — by far the most expensive request we serve. A 60s TTL roughly
+ * halves that load with at most one extra snapshot's worth of staleness.
+ */
+const LIST_CACHE_CONTROL = 'public, max-age=60, s-maxage=60';
 
 /** Compact RFC3339-like timestamp: 20060102T150405Z (matches ingest's key format). */
 const TIMESTAMP_RE = /^\d{8}T\d{6}Z$/;
