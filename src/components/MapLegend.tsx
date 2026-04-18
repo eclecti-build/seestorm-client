@@ -100,11 +100,13 @@ export default function MapLegend({
 
   return (
     // No absolute positioning — the parent (WeatherMap top-left column)
-    // owns the layout slot. Keeping max-w aligned with LocationChip so the
-    // two stacked accordions look like a coherent column rather than two
-    // unrelated bubbles of different widths.
+    // owns the layout slot. Collapsed hugs the "LEGEND ▸" header so the
+    // chip doesn't eat mobile width; expanded grows to a comfortable
+    // reading width for the tier/event rows.
     <div
-      className="bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 text-xs overflow-hidden max-w-[18rem]"
+      className={`bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 text-xs overflow-hidden max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] ${
+        open ? 'w-72' : 'w-fit'
+      }`}
       role="region"
       aria-label="Map legend"
     >

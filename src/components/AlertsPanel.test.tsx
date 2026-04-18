@@ -185,4 +185,37 @@ describe('<AlertsPanel />', () => {
       screen.queryByRole('button', { name: /collapse alerts panel/i }),
     ).not.toBeInTheDocument();
   });
+
+  // Width-toggle regression (codex 2026-04-18): the panel must hug its text
+  // when collapsed and only expand to a fixed width when opened. Without
+  // this guarantee the mobile viewport fix silently regresses — the old
+  // `w-80` parent column used to force all three stacked panels to 320px
+  // even when collapsed.
+  describe('width states (mobile viewport regression)', () => {
+    it('empty state hugs content (w-fit)', () => {
+      render(<AlertsPanel alerts={[]} onSelect={() => {}} now={FIXED_NOW} />);
+      const region = screen.getByRole('region', { name: /active alerts/i });
+      expect(region).toHaveClass('w-fit');
+      expect(region).not.toHaveClass('w-80');
+    });
+
+    it('expanded panel uses a fixed w-80 width', () => {
+      const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
+      render(<AlertsPanel alerts={[tornado]} onSelect={() => {}} now={FIXED_NOW} />);
+      const region = screen.getByRole('region', { name: /active alerts/i });
+      expect(region).toHaveClass('w-80');
+      expect(region).not.toHaveClass('w-fit');
+    });
+
+    it('collapsed panel hugs content (w-fit) and drops the expanded width', () => {
+      const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
+      render(<AlertsPanel alerts={[tornado]} onSelect={() => {}} now={FIXED_NOW} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /collapse alerts panel/i }));
+
+      const region = screen.getByRole('region', { name: /active alerts/i });
+      expect(region).toHaveClass('w-fit');
+      expect(region).not.toHaveClass('w-80');
+    });
+  });
 });

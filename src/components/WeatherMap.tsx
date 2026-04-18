@@ -1238,7 +1238,7 @@ export default function WeatherMap() {
           bottom-left positioning of the legend caused the two to drift
           out of visual relationship as the chip grew). All three respect
           the same safe-area insets on notched devices. */}
-      <div className="absolute top-[calc(4rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] w-80 max-w-[calc(100vw-2rem)] flex flex-col gap-2">
+      <div className="absolute top-[calc(4rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] flex flex-col gap-2 items-start">
         {/* Active alerts list — surfaces every alert (polygon + zone-only).
             Critical for Watches and other zone-aggregate products that have
             no geometry and therefore don't appear on the map. Clicking a card

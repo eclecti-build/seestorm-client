@@ -147,4 +147,24 @@ describe('<MapLegend />', () => {
     const row = screen.getByRole('button', { name: /toggle tornado warning on map/i });
     expect(row.className).toMatch(/opacity-40/);
   });
+
+  // Width-toggle regression (codex 2026-04-18): collapsed must hug text so
+  // the stacked panel column doesn't eat mobile width. Expanded grows to
+  // a fixed reading width for the tier/event rows.
+  describe('width states (mobile viewport regression)', () => {
+    it('collapsed legend hugs content (w-fit)', () => {
+      renderLegend();
+      const region = screen.getByRole('region', { name: /map legend/i });
+      expect(region).toHaveClass('w-fit');
+      expect(region).not.toHaveClass('w-72');
+    });
+
+    it('expanded legend uses a fixed w-72 width', () => {
+      renderLegend();
+      fireEvent.click(screen.getByRole('button', { name: /^legend$/i }));
+      const region = screen.getByRole('region', { name: /map legend/i });
+      expect(region).toHaveClass('w-72');
+      expect(region).not.toHaveClass('w-fit');
+    });
+  });
 });
