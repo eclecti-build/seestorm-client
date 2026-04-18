@@ -19,7 +19,7 @@ import {
 import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import { boostBasemapContrast } from '@/lib/mapContrast';
 import { alertLayerFilter } from '@/lib/alertFilter';
-import { getUserLocation } from '@/lib/userLocation';
+import { getUserLocation, USER_LOCATION_KEY } from '@/lib/userLocation';
 import { applyGeoDefaultIfNeeded } from '@/lib/geoDefault';
 import { STATE_VIEW_ZOOM } from '@/lib/coverage';
 import { uspsToFips } from '@/lib/stateFips';
@@ -294,6 +294,60 @@ export default function WeatherMap() {
     userStateRef.current = userState;
   }, [userState]);
 
+  // ZIP-precise point filter — populated when the saved location carries a
+  // `zip` field (signals "ZIP entry mode" vs "state picker mode"). When set,
+  // takes precedence over `userState` in buildAlertViews and gives pixel-
+  // precise filtering for polygon-bearing alerts (Warnings) while still
+  // surfacing zone-only alerts (Watches) at the user's state.
+  //
+  // Hydrated from localStorage in the same effect that hydrates `userState`
+  // (see below) so the two stay in lockstep — we never want a userPoint
+  // without a corresponding userState fallback.
+  const userPointRef = useRef<{ lat: number; lon: number; state: string } | null>(null);
+
+  // Sync BOTH userState (chip + map fly) AND userPointRef (precise filter)
+  // from any userLocation change. Listens to:
+  //   1. The custom `seestorm:user-location-changed` event — fires on
+  //      same-tab writes (LocationChip pick / clear / ZIP submit, geo
+  //      default fetch).
+  //   2. The browser-native `storage` event — fires only in OTHER tabs
+  //      when localStorage is mutated, scoped to USER_LOCATION_KEY.
+  //
+  // Updating both together keeps the map's filters in lockstep with the
+  // chip's display: a cross-tab change to ZIP-A while this tab was on
+  // ZIP-B used to leave the map filtering against ZIP-B (split-brain).
+  // Now both flip together — chip text, userState fallback, userPoint
+  // precise filter — matching what the user sees in the chip elsewhere.
+  useEffect(() => {
+    function syncFromStorage() {
+      const loc = getUserLocation();
+      // userState drives the coarse filter + chip display + downstream
+      // effects (map fly, county filter). null when no saved location.
+      setUserStateLocal(loc?.state ?? null);
+      // userPointRef drives the precise filter — only when the saved
+      // location carries a `zip` field (signals ZIP-entry mode vs
+      // state-picker mode).
+      if (loc && typeof loc.zip === 'string' && loc.zip.length > 0) {
+        userPointRef.current = { lat: loc.lat, lon: loc.lon, state: loc.state };
+      } else {
+        userPointRef.current = null;
+      }
+    }
+    // Same-tab event from LocationChip / geoDefault / clear.
+    window.addEventListener('seestorm:user-location-changed', syncFromStorage);
+    // Cross-tab event — browser fires `storage` only on OTHER tabs when
+    // localStorage changes. Filter to the user-location key so we don't
+    // re-sync on unrelated keys.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === USER_LOCATION_KEY) syncFromStorage();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('seestorm:user-location-changed', syncFromStorage);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
   // Fetch the live snapshot (/v1/active-events.json) — used when sliderValue is live.
   const fetchLive = useCallback(async () => {
     try {
@@ -304,6 +358,7 @@ export default function WeatherMap() {
       const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
         countyLookup: countyLookupRef.current ?? undefined,
         userState: userStateRef.current ?? undefined,
+        userPoint: userPointRef.current ?? undefined,
       });
       setAllAlerts(listAlerts);
       setSnapshotTime(new Date(snapshot.generated_at));
@@ -328,6 +383,7 @@ export default function WeatherMap() {
         const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
+          userPoint: userPointRef.current ?? undefined,
         });
         setAllAlerts(listAlerts);
         setSnapshotTime(new Date(snapshot.generated_at));

@@ -17,7 +17,7 @@
 //   2. Expanded  — 8-button grid for MN / WI / IL / IN / MI / OH / PA / NY,
 //                  plus a "Show all states" action when a state is selected.
 
-import { useCallback, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 import {
   clearUserLocation,
   setUserLocation,
@@ -25,6 +25,12 @@ import {
   type UserLocation,
 } from '@/lib/userLocation';
 import { COVERAGE, STATE_CENTERS, STATE_VIEW_ZOOM } from '@/lib/coverage';
+import { lookupZip, normalizeZip } from '@/lib/zipLookup';
+
+// Zoom hydrated for a ZIP-precise pick — closer than the state-pick default
+// so the user sees the area around their actual coordinates instead of the
+// whole state.
+const ZIP_VIEW_ZOOM = 8;
 
 type Mode = 'collapsed' | 'expanded';
 
@@ -42,9 +48,30 @@ interface LocationChipProps {
 export default function LocationChip({ onLocationChange }: LocationChipProps) {
   const { location, hydrated } = useUserLocation();
   const [mode, setMode] = useState<Mode>('collapsed');
+  // ZIP entry UI state — kept local because it's transient between
+  // keystrokes and not worth persisting. `zipError` displays the most recent
+  // failure (out-of-coverage / malformed / fetch failure).
+  const [zipInput, setZipInput] = useState('');
+  const [zipError, setZipError] = useState<string | null>(null);
+  const [zipBusy, setZipBusy] = useState(false);
+  // Request-token guard: every ZIP submit increments this; in-flight
+  // submits stash their token before awaiting and check it again on
+  // resolve. Any newer action (another ZIP submit, state pick, clear)
+  // bumps the token first, which causes the older response to noop on
+  // arrival. Prevents the late-response-overrides-newer-pick race that
+  // codex flagged: tap ZIP -> immediately tap a state chip -> map used
+  // to snap back to the old ZIP when its lookup eventually resolved.
+  const zipRequestRef = useRef(0);
+  // Stable IDs for label/input/error association (a11y).
+  const reactId = useId();
+  const inputId = `${reactId}-zip-input`;
+  const errorId = `${reactId}-zip-error`;
 
   const handlePick = useCallback(
     (state: keyof typeof STATE_CENTERS) => {
+      // Invalidate any in-flight ZIP lookup BEFORE writing the new state
+      // pick — otherwise its late resolve would clobber this choice.
+      zipRequestRef.current++;
       const center = STATE_CENTERS[state];
       const next: UserLocation = {
         state,
@@ -53,17 +80,90 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
         source: 'manual',
         setAt: Date.now(),
       };
+      // Note: no `zip` field. WeatherMap reads the absence of `zip` as
+      // "state-picker mode" and applies the coarse userState filter rather
+      // than the polygon-precise userPoint filter.
       setUserLocation(next);
       setMode('collapsed');
+      // Reset the ZIP draft + error so reopening the chip after a state
+      // pick doesn't show a stale "ZZZZZ isn't in our coverage" message
+      // from a prior failed lookup.
+      setZipInput('');
+      setZipError(null);
       onLocationChange?.({ state, lat: center.lat, lon: center.lon, zoom: STATE_VIEW_ZOOM });
     },
     [onLocationChange],
   );
 
   const handleClear = useCallback(() => {
+    // Same invalidation rule as handlePick — a late ZIP response after
+    // the user clicked "Show all states" must not silently re-set a ZIP.
+    zipRequestRef.current++;
     clearUserLocation();
+    setZipInput('');
+    setZipError(null);
     onLocationChange?.(null);
   }, [onLocationChange]);
+
+  // Resolve the typed ZIP and persist as a ZIP-precise location. Failure
+  // modes surface in `zipError` and don't clobber any previously-saved
+  // location — only a successful lookup overwrites.
+  const handleZipSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      const normalized = normalizeZip(zipInput);
+      if (!normalized) {
+        setZipError('Enter a 5-digit ZIP.');
+        return;
+      }
+      // Capture this submit's token; any subsequent action (another submit,
+      // state pick, clear) will bump zipRequestRef.current, causing the
+      // resolve checks below to noop instead of clobbering the newer choice.
+      const requestId = ++zipRequestRef.current;
+      setZipBusy(true);
+      setZipError(null);
+      try {
+        const record = await lookupZip(normalized);
+        // Stale-request guard: if a newer action ran while we were awaiting,
+        // drop this result silently — the user already moved on.
+        if (requestId !== zipRequestRef.current) return;
+        if (!record) {
+          setZipError(`${normalized} isn't in our coverage area (MN/WI/IL/IN/MI/OH/PA/NY).`);
+          return;
+        }
+        const next: UserLocation = {
+          zip: normalized,
+          state: record.state,
+          lat: record.lat,
+          lon: record.lon,
+          source: 'manual',
+          setAt: Date.now(),
+        };
+        setUserLocation(next);
+        setMode('collapsed');
+        setZipInput('');
+        onLocationChange?.({
+          state: record.state,
+          lat: record.lat,
+          lon: record.lon,
+          zoom: ZIP_VIEW_ZOOM,
+        });
+      } catch {
+        // Same stale-guard: don't surface a "Try again" message for a
+        // request the user already abandoned.
+        if (requestId !== zipRequestRef.current) return;
+        // lookupZip clears its own promise cache on rejection so the next
+        // submit retries cleanly. Surface a friendly message rather than
+        // exposing the underlying fetch error.
+        setZipError("Couldn't load the ZIP table. Try again in a moment.");
+      } finally {
+        // Only flip busy off if this is still the active request — otherwise
+        // a stale resolution would clear the busy state for a newer submit.
+        if (requestId === zipRequestRef.current) setZipBusy(false);
+      }
+    },
+    [zipInput, onLocationChange],
+  );
 
   // Render nothing until hydration finishes to avoid SSR/CSR mismatch from
   // the localStorage read in useUserLocation.
@@ -71,7 +171,13 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
 
   const open = mode === 'expanded';
   const selectedState = location?.state?.toUpperCase() ?? null;
-  const summary = selectedState ?? 'All states';
+  const selectedZip = typeof location?.zip === 'string' ? location.zip : null;
+  // Summary leads with ZIP when present (more specific than state) so the
+  // user immediately recognizes "I'm filtered to my own ZIP" vs the broader
+  // statewide pick.
+  const summary = selectedZip
+    ? `${selectedZip} · ${selectedState ?? ''}`
+    : (selectedState ?? 'All states');
 
   return (
     <div
@@ -120,7 +226,49 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
             })}
           </div>
 
-          {selectedState && (
+          {/* ZIP entry — sits below the state grid as the precise option.
+             Submitting overrides any state pick with the ZIP-precise location;
+             the userPoint filter (polygon point-in-polygon) takes over for
+             warning-class alerts while zone-only alerts still flow through
+             the state-level fallback so Watches stay visible. */}
+          <form onSubmit={handleZipSubmit} className="space-y-1 pt-1 border-t border-gray-800">
+            <label htmlFor={inputId} className="text-[11px] text-gray-400">
+              Or enter your ZIP for alerts at your location:
+            </label>
+            <div className="flex gap-1">
+              <input
+                id={inputId}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9-]*"
+                maxLength={10}
+                value={zipInput}
+                onChange={(e) => {
+                  setZipInput(e.target.value);
+                  if (zipError) setZipError(null);
+                }}
+                placeholder="54481"
+                aria-invalid={zipError !== null || undefined}
+                aria-describedby={zipError ? errorId : undefined}
+                disabled={zipBusy}
+                className="flex-1 min-w-0 bg-gray-800 text-white px-2 py-1 rounded font-mono text-xs placeholder:text-gray-500 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <button
+                type="submit"
+                disabled={zipBusy || zipInput.trim().length === 0}
+                className="px-2 py-1 rounded font-mono text-xs font-semibold bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600"
+              >
+                {zipBusy ? '…' : 'Set'}
+              </button>
+            </div>
+            {zipError && (
+              <p id={errorId} role="alert" className="text-[10px] text-red-400">
+                {zipError}
+              </p>
+            )}
+          </form>
+
+          {(selectedState || selectedZip) && (
             <button
               type="button"
               onClick={handleClear}
