@@ -20,6 +20,7 @@ import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import { boostBasemapContrast } from '@/lib/mapContrast';
 import { alertLayerFilter } from '@/lib/alertFilter';
 import { getUserLocation } from '@/lib/userLocation';
+import { uspsToFips } from '@/lib/stateFips';
 import AlertsPanel from './AlertsPanel';
 import LocationChip from './LocationChip';
 import MapLegend from './MapLegend';
@@ -59,6 +60,26 @@ interface HistoryResponse {
   snapshots: HistoryEntry[];
   truncated: boolean;
   count: number;
+}
+
+// Apply the per-state county-line filter on the `admin-counties-line` layer.
+// Only the selected state's counties render; if no state is selected (or the
+// state isn't in the 8-state scope), the filter hides every feature so a
+// zoomed-out user doesn't see a busy 8-state county mesh.
+//
+// Pulled out of the component so the load handler and `handleLocationChange`
+// share one definition — drift between those two call sites would manifest
+// as "county lines stuck on the wrong state until the next state change".
+function applyCountyFilter(m: maplibregl.Map, usps: string | null): void {
+  if (!m.getLayer('admin-counties-line')) return;
+  const fips = uspsToFips(usps);
+  // MapLibre filter typing across versions is finicky — `setFilter` accepts
+  // the legacy array form unconditionally, so we cast to the runtime shape
+  // rather than fighting the union.
+  const filter = fips
+    ? (['==', ['get', 'STATE'], fips] as maplibregl.FilterSpecification)
+    : (['==', ['get', 'STATE'], '__none__'] as maplibregl.FilterSpecification);
+  m.setFilter('admin-counties-line', filter);
 }
 
 // ---------------------------------------------------------------------------
@@ -557,7 +578,7 @@ export default function WeatherMap() {
         try {
           const [statesRes, countiesRes] = await Promise.all([
             fetch('/geo/us-states.geojson'),
-            fetch('/geo/wi-counties.geojson'),
+            fetch('/geo/greatlakes-counties.geojson'),
           ]);
           if (statesRes.ok) {
             const states = (await statesRes.json()) as GeoJSON.FeatureCollection;
@@ -570,11 +591,21 @@ export default function WeatherMap() {
             );
             // Build the county-name lookup once so zone-only alerts
             // (Tornado Watches) can be hydrated into MapLibre-drawable
-            // polygons. Dispatch through `refreshCurrentFrameRef` rather
-            // than hardcoding fetchLive — the user may have scrubbed to
-            // history while counties were loading, and we must not
-            // overwrite their selected frame with live data.
+            // polygons. Lookup is global by NAME across all 8 states —
+            // cross-state hydration still works because alert area_desc
+            // carries state suffixes that countyGeometry filters on.
+            // Dispatch through `refreshCurrentFrameRef` rather than
+            // hardcoding fetchLive — the user may have scrubbed to history
+            // while counties were loading, and we must not overwrite their
+            // selected frame with live data.
             countyLookupRef.current = buildCountyLookup(counties);
+            // Apply the per-state county filter now that the source is
+            // populated. The user may have hydrated with a saved state
+            // before this fetch completed, in which case userStateRef is
+            // already set; otherwise the filter hides every feature
+            // (single-state focus is the agreed UX — multi-state county
+            // overlay at zoom 5 would be visually overwhelming).
+            applyCountyFilter(m, userStateRef.current);
             refreshCurrentFrameRef.current?.();
           }
         } catch (err) {
@@ -900,6 +931,12 @@ export default function WeatherMap() {
       setUserStateLocal(next?.state ?? null);
       const m = map.current;
       if (m) {
+        // Swap the county-line filter to match the newly selected state so
+        // county boundaries re-render against the state the user is now
+        // looking at. Safe to call before the counties source has loaded —
+        // the helper no-ops when the layer isn't on the map yet, and the
+        // load handler re-applies the filter against the current ref.
+        applyCountyFilter(m, next?.state ?? null);
         if (next) {
           const zoom = next.zoom ?? USER_LOCATION_ZOOM;
           m.flyTo({ center: [next.lon, next.lat], zoom, duration: 800 });

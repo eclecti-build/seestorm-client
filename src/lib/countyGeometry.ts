@@ -3,7 +3,7 @@
 // with no polygon — only `area_desc` and sometimes UGC codes. Until the
 // ingest contract carries structured UGC, we parse `area_desc` county names
 // and union the matching county polygons from the bundled
-// `public/geo/wi-counties.geojson`.
+// `public/geo/greatlakes-counties.geojson` (covers all 8 supported states).
 //
 // Kept pure (no React, no fetch) so unit tests cover the full path.
 
