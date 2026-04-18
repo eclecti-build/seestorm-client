@@ -21,7 +21,7 @@ import { boostBasemapContrast } from '@/lib/mapContrast';
 import { alertLayerFilter } from '@/lib/alertFilter';
 import { getUserLocation } from '@/lib/userLocation';
 import AlertsPanel from './AlertsPanel';
-import LocationBanner from './LocationBanner';
+import LocationChip from './LocationChip';
 import MapLegend from './MapLegend';
 
 // Wisconsin center — kept for backward reference (single-state legacy view).
@@ -913,10 +913,6 @@ export default function WeatherMap() {
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
 
-      {/* ZIP-based personalization banner. Above the map but doesn't intercept
-          map clicks outside its bounds. Persists to localStorage. */}
-      <LocationBanner onLocationChange={handleLocationChange} />
-
       {/* Alert count badge — counts ALL active alerts, including zone-aggregate
           products (Watches) that don't render on the map. Previously this
           reflected only polygon features, silently under-reporting Watches. */}
@@ -927,16 +923,27 @@ export default function WeatherMap() {
         </div>
       )}
 
-      {/* Active alerts list — surfaces every alert (polygon + zone-only).
-          Critical for Watches and other zone-aggregate products that have
-          no geometry and therefore don't appear on the map. Clicking a card
-          drives the same selectedAlert popup the map polygons do. */}
-      <AlertsPanel
-        alerts={allAlerts}
-        onSelect={focusAlert}
-        selectedId={selectedAlert?.properties.nwsId ?? null}
-        now={now}
-      />
+      {/* Top-left panel stack: active alerts above, ZIP filter chip below.
+          Kept in a shared absolute column so the chip naturally sits under
+          the alerts panel regardless of how many alerts are visible, and
+          both respect the same safe-area insets on notched devices. */}
+      <div className="absolute top-[calc(4rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] w-80 max-w-[calc(100vw-2rem)] flex flex-col gap-2">
+        {/* Active alerts list — surfaces every alert (polygon + zone-only).
+            Critical for Watches and other zone-aggregate products that have
+            no geometry and therefore don't appear on the map. Clicking a card
+            drives the same selectedAlert popup the map polygons do. */}
+        <AlertsPanel
+          alerts={allAlerts}
+          onSelect={focusAlert}
+          selectedId={selectedAlert?.properties.nwsId ?? null}
+          now={now}
+        />
+
+        {/* ZIP-based personalization chip. Collapsible legend-style bubble;
+            persists to localStorage. Rendered directly below the alerts panel
+            so users find it without it obstructing the map. */}
+        <LocationChip onLocationChange={handleLocationChange} />
+      </div>
 
       {/* Static legend — collapsed by default; explains polygon tiers + motion
           vector glyphs so new users can read the map without an onboarding. */}
