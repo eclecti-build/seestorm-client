@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { listNewestHistoryEntries, parsePerStateCode, type R2BucketListOnly } from './index';
+import {
+  listNewestHistoryEntries,
+  parsePerStateCode,
+  serveGeoSuggestion,
+  type R2BucketListOnly,
+} from './index';
 // R2ListOptions / R2Object / R2Objects are declared globally by
 // @cloudflare/workers-types. We import the namespace explicitly so this
 // test file stays compilable even if Vitest's tsconfig resolution drifts
@@ -363,4 +368,99 @@ describe('parsePerStateCode', () => {
       expect(parsePerStateCode(path)).toBeNull();
     });
   }
+});
+
+/**
+ * Build a mock Request that carries a synthetic `request.cf` payload. The
+ * Workers runtime's `IncomingRequestCfProperties` is read off the wire by
+ * Cloudflare and isn't otherwise constructible — we cast through `unknown`
+ * to attach exactly the fields `serveGeoSuggestion` consumes.
+ */
+function requestWithCf(cf: Record<string, unknown> | undefined): Request {
+  const req = new Request('https://seestorm.example/v1/geo');
+  // `cf` is read-only on real Workers requests; tests need to attach a
+  // controlled payload, so we cast through unknown and define the property
+  // directly. This is exactly the seam the production code reads through.
+  Object.defineProperty(req, 'cf', { value: cf, configurable: true });
+  return req;
+}
+
+describe('serveGeoSuggestion', () => {
+  it('returns the USPS code from cf.regionCode (NOT the long-form region name)', async () => {
+    // Regression guard for the bug this task fixes: cf.region is the full
+    // state name ("Wisconsin") which never matches the client's USPS-keyed
+    // coverage map. cf.regionCode is the 2-letter form the client expects.
+    const response = serveGeoSuggestion(
+      requestWithCf({
+        postalCode: '53703',
+        regionCode: 'WI',
+        region: 'Wisconsin',
+        latitude: '43.0747',
+        longitude: '-89.3838',
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      zip: '53703',
+      state: 'WI',
+      lat: 43.0747,
+      lon: -89.3838,
+    });
+  });
+
+  it('returns empty state when cf.regionCode is missing (corporate proxy / unknown IP)', async () => {
+    // CF can't always geolocate (corporate proxies, recently-changed
+    // allocations) — the response shape must stay stable so the client's
+    // schema guard doesn't reject the payload, with `state: ""` as the
+    // signal that no inference was possible.
+    const response = serveGeoSuggestion(
+      requestWithCf({
+        postalCode: '',
+        latitude: '',
+        longitude: '',
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      zip: '',
+      state: '',
+      lat: null,
+      lon: null,
+    });
+  });
+
+  it('returns null lat/lon when the coordinates are non-numeric or absent', async () => {
+    const response = serveGeoSuggestion(
+      requestWithCf({
+        regionCode: 'IL',
+        // latitude/longitude omitted entirely.
+      }),
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.state).toBe('IL');
+    expect(body.lat).toBeNull();
+    expect(body.lon).toBeNull();
+  });
+
+  it('handles a missing cf object entirely without throwing', async () => {
+    // The Workers runtime always sets `request.cf`, but defensive coding
+    // here keeps a future framework-level change (or a test fixture that
+    // forgets to populate it) from 500-ing the endpoint.
+    const response = serveGeoSuggestion(requestWithCf(undefined));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({ zip: '', state: '', lat: null, lon: null });
+  });
+
+  it('ignores non-string regionCode (defends against runtime drift)', async () => {
+    const response = serveGeoSuggestion(
+      requestWithCf({
+        regionCode: 42, // wrong type — production CF would never send this
+      }),
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.state).toBe('');
+  });
 });

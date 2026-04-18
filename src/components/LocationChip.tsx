@@ -24,37 +24,7 @@ import {
   useUserLocation,
   type UserLocation,
 } from '@/lib/userLocation';
-
-// Approximate geographic centers of each covered state — used to recenter
-// the map when the user picks a state. Pairs with `STATE_VIEW_ZOOM` (emitted
-// via `onLocationChange.zoom`) to give a whole-state view rather than the
-// city-level zoom the old ZIP flow used.
-const STATE_CENTERS: Record<string, { lat: number; lon: number }> = {
-  MN: { lat: 46.3, lon: -94.3 },
-  WI: { lat: 44.5, lon: -89.5 },
-  IL: { lat: 40.0, lon: -89.0 },
-  IN: { lat: 39.9, lon: -86.3 },
-  MI: { lat: 44.3, lon: -85.6 },
-  OH: { lat: 40.4, lon: -82.8 },
-  PA: { lat: 40.9, lon: -77.8 },
-  NY: { lat: 42.9, lon: -75.5 },
-};
-
-const COVERAGE: ReadonlyArray<keyof typeof STATE_CENTERS> = [
-  'MN',
-  'WI',
-  'IL',
-  'IN',
-  'MI',
-  'OH',
-  'PA',
-  'NY',
-];
-
-// Zoom that fits a single state in the viewport. The old ZIP flow used
-// level 8 (≈ city/county) which is too tight when we can only resolve to
-// state granularity.
-const STATE_VIEW_ZOOM = 6;
+import { COVERAGE, STATE_CENTERS, STATE_VIEW_ZOOM } from '@/lib/coverage';
 
 type Mode = 'collapsed' | 'expanded';
 
