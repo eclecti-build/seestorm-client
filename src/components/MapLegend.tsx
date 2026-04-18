@@ -99,8 +99,12 @@ export default function MapLegend({
   const entries = Object.entries(WARNING_COLORS);
 
   return (
+    // No absolute positioning — the parent (WeatherMap top-left column)
+    // owns the layout slot. Keeping max-w aligned with LocationChip so the
+    // two stacked accordions look like a coherent column rather than two
+    // unrelated bubbles of different widths.
     <div
-      className="absolute bottom-[calc(7rem+env(safe-area-inset-bottom))] left-[calc(1rem+env(safe-area-inset-left))] bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 text-xs overflow-hidden max-w-[15rem]"
+      className="bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 text-xs overflow-hidden max-w-[18rem]"
       role="region"
       aria-label="Map legend"
     >

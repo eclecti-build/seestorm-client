@@ -101,6 +101,14 @@ export default function WeatherMap() {
   // Null until load completes — callers of buildAlertViews pass it
   // through optionally, so pre-load snapshots still render polygon alerts.
   const countyLookupRef = useRef<CountyLookup | null>(null);
+  // Parsed county FeatureCollection kept around for point-in-polygon
+  // resolution of "which county is the user's ZIP centroid in?". Separate
+  // from countyLookupRef (which is name-keyed for area_desc hydration) —
+  // here we need the raw geometries for turf PiP. Populated by the same
+  // counties fetch that builds the lookup.
+  const countyFeaturesRef = useRef<
+    GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] | null
+  >(null);
   // Mirror of "refetch whichever frame the user is currently viewing".
   // Kept in a ref so async handlers outside React's dependency graph (e.g.
   // the counties-loaded callback in the map `load` handler) can hydrate the
@@ -305,6 +313,18 @@ export default function WeatherMap() {
   // without a corresponding userState fallback.
   const userPointRef = useRef<{ lat: number; lon: number; state: string } | null>(null);
 
+  // applyUserCountyHighlight: PiP-resolves the county containing the user's
+  // saved ZIP and updates the `admin-counties-user-highlight` layer's filter
+  // to match (or hides the layer when no ZIP is set / counties haven't
+  // loaded yet / no county contains the point — which can happen for ZIPs
+  // outside our 8-state coverage).
+  //
+  // Held in a ref so the counties-loaded async callback in the map `load`
+  // handler can re-resolve when its data arrives — without taking a
+  // dependency on the function identity (which would re-run the load
+  // handler every render).
+  const applyUserCountyHighlightRef = useRef<(() => void) | null>(null);
+
   // Sync BOTH userState (chip + map fly) AND userPointRef (precise filter)
   // from any userLocation change. Listens to:
   //   1. The custom `seestorm:user-location-changed` event — fires on
@@ -332,7 +352,15 @@ export default function WeatherMap() {
       } else {
         userPointRef.current = null;
       }
+      // Re-resolve which county to highlight whenever the saved location
+      // changes. Cheap (one PiP per county feature in a ~650-feature set)
+      // and only runs when the user actually changes locations.
+      applyUserCountyHighlightRef.current?.();
     }
+    // Initial sync — pick up any previously-saved location on first
+    // render so the user-county highlight resolves on the first poll
+    // cycle rather than waiting for the next location change.
+    syncFromStorage();
     // Same-tab event from LocationChip / geoDefault / clear.
     window.addEventListener('seestorm:user-location-changed', syncFromStorage);
     // Cross-tab event — browser fires `storage` only on OTHER tabs when
@@ -347,6 +375,72 @@ export default function WeatherMap() {
       window.removeEventListener('storage', onStorage);
     };
   }, []);
+
+  // User-county highlight resolver: PiP-finds the county containing the
+  // user's saved ZIP and updates the highlight layer's filter to match.
+  // Defined as a useEffect (not just a plain function) so it can re-run
+  // when mapReady flips and so the cleanup nulls the ref — preventing the
+  // counties-loaded callback from calling into a stale closure after
+  // unmount.
+  //
+  // Hides the layer (filter to '__none__') when:
+  //   - no userPoint set (user picked a state chip, not a ZIP)
+  //   - county data hasn't loaded yet
+  //   - userPoint is outside any covered county (out-of-coverage ZIP)
+  useEffect(() => {
+    if (!mapReady) return;
+    const m = map.current;
+    if (!m) return;
+
+    function applyHighlight() {
+      // Re-bind from the ref each call — the outer `m` narrowing doesn't
+      // carry into a closure that may be invoked from event handlers later.
+      const mapInstance = map.current;
+      if (!mapInstance) return;
+      const layerId = 'admin-counties-user-highlight';
+      if (!mapInstance.getLayer(layerId)) return;
+      const userPt = userPointRef.current;
+      const features = countyFeaturesRef.current;
+      if (!userPt || !features) {
+        mapInstance.setFilter(layerId, ['==', ['get', 'STATE'], '__none__']);
+        return;
+      }
+      // Iterate counties and PiP-test against the user's coordinates.
+      // 650 features × O(polygon edges) — single-digit ms in practice.
+      // Wrapped in try so a malformed feature can't blank the layer.
+      for (const f of features) {
+        try {
+          if (turf.booleanPointInPolygon(turf.point([userPt.lon, userPt.lat]), f)) {
+            const props = f.properties as { STATE?: string; COUNTY?: string } | null;
+            if (props?.STATE && props.COUNTY) {
+              mapInstance.setFilter(layerId, [
+                'all',
+                ['==', ['get', 'STATE'], props.STATE],
+                ['==', ['get', 'COUNTY'], props.COUNTY],
+              ]);
+              return;
+            }
+          }
+        } catch {
+          // Bad feature — skip rather than abort. The match (if any)
+          // continues; if nothing matches, we hide the layer below.
+        }
+      }
+      // No matching county (out-of-coverage ZIP, or features list is
+      // smaller than the coverage area for some reason). Hide cleanly.
+      mapInstance.setFilter(layerId, ['==', ['get', 'STATE'], '__none__']);
+    }
+
+    applyUserCountyHighlightRef.current = applyHighlight;
+    // Run once on wire-up so a hydrated location resolves immediately
+    // (the syncFromStorage path also calls this, but that may have run
+    // before the map was ready).
+    applyHighlight();
+
+    return () => {
+      applyUserCountyHighlightRef.current = null;
+    };
+  }, [mapReady]);
 
   // Fetch the live snapshot (/v1/active-events.json) — used when sliderValue is live.
   const fetchLive = useCallback(async () => {
@@ -697,6 +791,17 @@ export default function WeatherMap() {
             (m.getSource('admin-counties') as maplibregl.GeoJSONSource | undefined)?.setData(
               counties,
             );
+            // Stash the raw features for the user-county PiP resolver. Cast
+            // is safe — Census county GeoJSON is exclusively Polygon /
+            // MultiPolygon. The user-county-highlight effect runs PiP
+            // against this list when a ZIP-precise location is set.
+            countyFeaturesRef.current = counties.features as GeoJSON.Feature<
+              GeoJSON.Polygon | GeoJSON.MultiPolygon
+            >[];
+            // Re-resolve the user's county now that the data is available
+            // (the user may have hydrated from localStorage with a ZIP
+            // before counties finished loading).
+            applyUserCountyHighlightRef.current?.();
             // Build the county-name lookup once so zone-only alerts
             // (Tornado Watches) can be hydrated into MapLibre-drawable
             // polygons. Lookup is global by NAME across all 8 states —
@@ -795,6 +900,24 @@ export default function WeatherMap() {
           'line-color': '#d1d5db',
           'line-width': 1.4,
           'line-opacity': 0.85,
+        },
+      });
+      // User-county highlight — subtle but distinctly different border on
+      // the single county containing the user's saved ZIP. Filter is set
+      // by `applyUserCountyHighlight` to '__none__' (hide all) until a ZIP
+      // is set AND its containing county is resolved. Cyan picks up nicely
+      // against the dark basemap and the warning-color palette without
+      // colliding with any alert-tier hue (red / orange / yellow / pink /
+      // green are all tier-meaningful; cyan stays personal-context).
+      m.addLayer({
+        id: 'admin-counties-user-highlight',
+        type: 'line',
+        source: 'admin-counties',
+        filter: ['==', ['get', 'STATE'], '__none__'],
+        paint: {
+          'line-color': '#22d3ee',
+          'line-width': 2.5,
+          'line-opacity': 0.9,
         },
       });
       m.addLayer({
@@ -1072,10 +1195,13 @@ export default function WeatherMap() {
         </div>
       )}
 
-      {/* Top-left panel stack: active alerts above, ZIP filter chip below.
-          Kept in a shared absolute column so the chip naturally sits under
-          the alerts panel regardless of how many alerts are visible, and
-          both respect the same safe-area insets on notched devices. */}
+      {/* Top-left panel stack: active alerts → ZIP filter chip → legend.
+          Shared absolute column so the chip and legend naturally flex when
+          either accordion expands — opening the LocationChip pushes the
+          MapLegend down rather than overlapping it (the prior absolute
+          bottom-left positioning of the legend caused the two to drift
+          out of visual relationship as the chip grew). All three respect
+          the same safe-area insets on notched devices. */}
       <div className="absolute top-[calc(4rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] w-80 max-w-[calc(100vw-2rem)] flex flex-col gap-2">
         {/* Active alerts list — surfaces every alert (polygon + zone-only).
             Critical for Watches and other zone-aggregate products that have
@@ -1092,16 +1218,19 @@ export default function WeatherMap() {
             persists to localStorage. Rendered directly below the alerts panel
             so users find it without it obstructing the map. */}
         <LocationChip onLocationChange={handleLocationChange} />
-      </div>
 
-      {/* Static legend — collapsed by default; explains polygon tiers + motion
-          vector glyphs so new users can read the map without an onboarding. */}
-      <MapLegend
-        hiddenTiers={hiddenTiers}
-        onToggleTier={toggleTier}
-        hiddenEvents={hiddenEvents}
-        onToggleEvent={toggleEvent}
-      />
+        {/* Static legend — collapsed by default; explains polygon tiers +
+            motion vector glyphs so new users can read the map without an
+            onboarding. Sits in the same column as the LocationChip so
+            expanding either accordion flexes the other into a clean
+            stacked layout. */}
+        <MapLegend
+          hiddenTiers={hiddenTiers}
+          onToggleTier={toggleTier}
+          hiddenEvents={hiddenEvents}
+          onToggleEvent={toggleEvent}
+        />
+      </div>
 
       {/* Historical mode indicator — radar + alerts are NOT current */}
       {!isLive && !isForecast && (
