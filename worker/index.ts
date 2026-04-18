@@ -52,6 +52,37 @@ const GEO_CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=60';
 /** Compact RFC3339-like timestamp: 20060102T150405Z (matches ingest's key format). */
 const TIMESTAMP_RE = /^\d{8}T\d{6}Z$/;
 
+/**
+ * USPS 2-letter state code, uppercase only. The per-state R2 keys use this
+ * exact shape (`active-events/{STATE}.json`), so any tightening here must
+ * stay in lockstep with the ingest-side `nws.IsValidStateCode` allowlist.
+ *
+ * Regex-only is intentional: full FIPS-membership validation lives at the
+ * write side. The Worker accepts any well-formed token and returns 404 if
+ * R2 has no matching object — which happens naturally for states ingest
+ * isn't configured for, with no client-side coupling to the deployed area
+ * list.
+ */
+const STATE_CODE_RE = /^[A-Z]{2}$/;
+
+/**
+ * Extract a per-state code from `/v1/active-events/{STATE}.json`. Returns
+ * null for malformed paths (different segment count, lowercase, missing
+ * extension, suspicious characters). Pure function — exported for test.
+ */
+export function parsePerStateCode(pathname: string): string | null {
+  const prefix = '/v1/active-events/';
+  if (!pathname.startsWith(prefix)) return null;
+  const tail = pathname.slice(prefix.length);
+  // Path must be exactly `{STATE}.json` — no nested segments, no query
+  // soup, no Unicode, no path traversal. The `.json` requirement keeps
+  // us symmetric with the merged endpoint URL shape.
+  const match = tail.match(/^([A-Z]{2})\.json$/);
+  if (!match) return null;
+  if (!STATE_CODE_RE.test(match[1])) return null;
+  return match[1];
+}
+
 /** Default history window returned by /v1/history — 2 hours at 30s polls = 240 snapshots. */
 const HISTORY_DEFAULT_LIMIT = 240;
 const HISTORY_MAX_LIMIT = 1000;
@@ -74,9 +105,19 @@ async function handleApiRequest(request: Request, url: URL, env: Env): Promise<R
     return methodNotAllowed();
   }
 
-  // /v1/active-events.json — the live overwritten snapshot.
+  // /v1/active-events.json — the merged multi-state snapshot.
   if (url.pathname === '/v1/active-events.json') {
     return serveObject(request, env, 'active-events.json', LIVE_CACHE_CONTROL);
+  }
+
+  // /v1/active-events/{STATE}.json — per-state snapshot. Lets clients that
+  // care about a subset of states (e.g. a user with a saved ZIP) fetch only
+  // the slice they need instead of the full multi-state payload. Same cache
+  // contract as the merged endpoint — the ingest writes both at the same
+  // 30s cadence with identical cache headers.
+  const stateCode = parsePerStateCode(url.pathname);
+  if (stateCode !== null) {
+    return serveObject(request, env, `active-events/${stateCode}.json`, LIVE_CACHE_CONTROL);
   }
 
   // /v1/geo — best-effort suggested location from the CF edge metadata. The
