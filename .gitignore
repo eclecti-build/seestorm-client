@@ -50,3 +50,8 @@ next-env.d.ts
 
 # Codex review artifacts
 .codex-review/
+
+# One-shot data regeneration workspace (see scripts/build-zip-data.ts).
+# The Census Gazetteer / county shapefiles live here when refreshing
+# public/data/zip-greatlakes.json. Not needed at runtime or in CI.
+/tmp/

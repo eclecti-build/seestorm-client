@@ -13,23 +13,33 @@
  *     every commit.
  *
  * Usage (one-time, when refreshing data):
- *   npx tsx scripts/build-zip-data.ts
+ *   1. Download the Census ZCTA Gazetteer (~3 MB zipped):
+ *        curl -sSL -o tmp/gaz.zip \
+ *          https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2020_Gazetteer/2020_Gaz_zcta_national.zip
+ *        unzip -o tmp/gaz.zip -d tmp/
+ *   2. Download the Census county shapefile (only if you want county
+ *      names attached — optional, see note below):
+ *        https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_county_500k.zip
+ *   3. Run:
+ *        npx tsx scripts/build-zip-data.ts
  *
- * The Gazetteer file is fixed-width text with a header row. Columns of
- * interest (1-indexed in Census docs):
+ * The Gazetteer file is TAB-separated text with a header row. Columns:
  *   GEOID    — 5-digit ZCTA (acts as the ZIP key for this lookup)
- *   USPS     — state code (2-letter)  — present in the *zcta* file? No.
+ *   ALAND, AWATER, ALAND_SQMI, AWATER_SQMI
  *   INTPTLAT — internal point latitude  (centroid)
  *   INTPTLONG— internal point longitude
  *
  * The national ZCTA file does NOT carry state — ZCTAs cross state lines.
- * To attach a state and county we cross-reference each ZCTA's INTPT
- * coordinates against the bundled `public/geo/us-states.geojson` and a
- * county GeoJSON. The script therefore needs:
- *   1. 2020_Gaz_zcta_national.txt  (Census Gazetteer)
- *   2. cb_2020_us_county_500k.geojson  (Census Cartographic Boundary)
+ * To attach a state we cross-reference each ZCTA's INTPT coordinates
+ * against the bundled `public/geo/us-states.geojson` (ships in-repo).
  *
- * Both are public-domain Census products. URLs:
+ * County attachment is OPTIONAL. The runtime only reads `state` from each
+ * record; `county` is a string (may be empty) kept for future display.
+ * If the county shapefile is absent, emit `county: ''` — the checked-in
+ * `public/data/zip-greatlakes.json` is currently state-only for this
+ * reason, and `zipData.test.ts` enforces state coverage in CI.
+ *
+ * Both source files are public-domain Census products. URLs:
  *   https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2020_Gazetteer/2020_Gaz_zcta_national.zip
  *   https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_county_500k.zip
  *
