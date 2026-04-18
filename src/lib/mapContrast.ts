@@ -38,10 +38,10 @@ const LABEL_SOURCE_LAYERS: ReadonlySet<string> = new Set([
   'water_name',
 ]);
 
-// Boost factor applied to existing road `line-width`. 1.4× is visible without
+// Boost factor applied to existing road `line-width`. 1.7× is visible without
 // making roads look cartoonishly thick at high zoom — empirically tuned on the
 // CartoDB Dark Matter default style at zoom 7–12 (the SeeStorm viewport range).
-const ROAD_WIDTH_BOOST = 1.4;
+const ROAD_WIDTH_BOOST = 1.7;
 
 // Minimal structural subset of the MapLibre Map API we need. Declared locally
 // (not imported from maplibre-gl) so the helper can be unit-tested without a
@@ -121,6 +121,6 @@ function boostLabelSymbol(map: ContrastTarget, layerId: string): void {
   // to 1 would force every matched label to render at every zoom. The halo
   // alone is enough to make names punch through the radar + alert overlays.
   map.setPaintProperty(layerId, 'text-halo-color', '#000000');
-  map.setPaintProperty(layerId, 'text-halo-width', 2);
+  map.setPaintProperty(layerId, 'text-halo-width', 3);
   map.setPaintProperty(layerId, 'text-halo-blur', 0.5);
 }

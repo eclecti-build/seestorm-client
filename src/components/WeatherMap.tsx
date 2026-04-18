@@ -28,7 +28,7 @@ const DEFAULT_ZOOM = 7;
 
 // Radar animation tuning. These values balance responsiveness (slider feels
 // immediate) against smoothness (no visible popping during playback).
-const RADAR_OPACITY = 0.5;
+const RADAR_OPACITY = 0.38;
 const CROSSFADE_MS = 300; // A↔B layer opacity crossfade
 const TILE_FADE_MS = 400; // MapLibre built-in in-tile fade
 
