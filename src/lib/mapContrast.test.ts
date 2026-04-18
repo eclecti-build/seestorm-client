@@ -46,7 +46,7 @@ describe('boostBasemapContrast', () => {
     boostBasemapContrast(target);
 
     expect(setPaint).toHaveBeenCalledWith('road-primary', 'line-opacity', 1);
-    expect(setPaint).toHaveBeenCalledWith('road-primary', 'line-width', ['*', 2, 1.7]);
+    expect(setPaint).toHaveBeenCalledWith('road-primary', 'line-width', ['*', 2, 2.2]);
   });
 
   it('wraps expression-valued line-width without unpacking it', () => {
@@ -58,7 +58,7 @@ describe('boostBasemapContrast', () => {
 
     boostBasemapContrast(target);
 
-    expect(setPaint).toHaveBeenCalledWith('road-expr', 'line-width', ['*', expr, 1.7]);
+    expect(setPaint).toHaveBeenCalledWith('road-expr', 'line-width', ['*', expr, 2.2]);
   });
 
   it('skips the width boost when line-width is a legacy stops-function object', () => {
@@ -108,7 +108,7 @@ describe('boostBasemapContrast', () => {
     boostBasemapContrast(target);
 
     expect(setPaint).toHaveBeenCalledWith('city-names', 'text-halo-color', '#000000');
-    expect(setPaint).toHaveBeenCalledWith('city-names', 'text-halo-width', 3);
+    expect(setPaint).toHaveBeenCalledWith('city-names', 'text-halo-width', 4);
     expect(setPaint).toHaveBeenCalledWith('city-names', 'text-halo-blur', 0.5);
     // text-opacity is deliberately left alone so the basemap's zoom-fade
     // expression for low-priority labels keeps working.
@@ -126,7 +126,7 @@ describe('boostBasemapContrast', () => {
     boostBasemapContrast(target);
 
     for (const id of ['road-lbl', 'water-lbl']) {
-      expect(setPaint).toHaveBeenCalledWith(id, 'text-halo-width', 3);
+      expect(setPaint).toHaveBeenCalledWith(id, 'text-halo-width', 4);
     }
   });
 
@@ -193,6 +193,6 @@ describe('boostBasemapContrast', () => {
 
     // Good road still got its paint tweaks despite the broken layer throwing.
     expect(setPaint).toHaveBeenCalledWith('good-road', 'line-opacity', 1);
-    expect(setPaint).toHaveBeenCalledWith('good-road', 'line-width', ['*', 1, 1.7]);
+    expect(setPaint).toHaveBeenCalledWith('good-road', 'line-width', ['*', 1, 2.2]);
   });
 });

@@ -28,7 +28,7 @@ const DEFAULT_ZOOM = 7;
 
 // Radar animation tuning. These values balance responsiveness (slider feels
 // immediate) against smoothness (no visible popping during playback).
-const RADAR_OPACITY = 0.38;
+const RADAR_OPACITY = 0.28;
 const CROSSFADE_MS = 300; // A↔B layer opacity crossfade
 const TILE_FADE_MS = 400; // MapLibre built-in in-tile fade
 
@@ -601,11 +601,11 @@ export default function WeatherMap() {
         type: 'line',
         source: 'admin-counties',
         paint: {
-          // Lightened from #6b7280 / 0.6 / 0.35 — with radar + alert fills
-          // stacked on top, the old values washed out at typical zooms.
-          'line-color': '#9ca3af',
-          'line-width': 1,
-          'line-opacity': 0.6,
+          // Lightened from #9ca3af / 1 / 0.6 — still distinguishable from the
+          // brighter state lines above, but punches through radar + fills.
+          'line-color': '#d1d5db',
+          'line-width': 1.4,
+          'line-opacity': 0.85,
         },
       });
       m.addLayer({
