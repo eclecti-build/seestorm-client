@@ -136,7 +136,7 @@ export default function LocationBanner({ onLocationChange }: LocationBannerProps
   if (!hydrated || mode === 'dismissed') return null;
 
   return (
-    <div className="absolute top-4 right-4 z-10 max-w-sm">
+    <div className="absolute top-4 right-14 z-10 max-w-sm">
       {mode === 'chip' && location ? (
         <div className="flex items-center gap-2 bg-gray-900/90 text-white text-xs rounded-lg shadow-lg border border-gray-700 px-3 py-2">
           <span className="text-gray-400">Showing alerts near</span>
