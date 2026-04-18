@@ -94,6 +94,18 @@ export default function WeatherMap() {
   // Which radar layer is currently on top (fully visible). The other is the
   // staging layer — we load the next URL into it, then crossfade.
   const activeRadar = useRef<'a' | 'b'>('a');
+  // URL currently displayed by the active radar layer. Tracked so the radar
+  // effect can no-op when its dep array fires for unrelated reasons in
+  // historical/forecast mode — those URLs encode a timestamp, so an identical
+  // URL means identical tile content and re-firing `setTiles` is pure waste.
+  //
+  // CRITICAL: this guard MUST NOT apply in live mode. `radarTileUrl('live')`
+  // returns a constant URL pointing at a Mesonet endpoint whose response
+  // *content* changes every few minutes; the only way fresh live radar makes
+  // it on screen is the 30s history poll re-firing this effect and calling
+  // `setTiles` to invalidate the source's tile pyramid. Deduping live URLs
+  // would freeze the live view at the first tick — see live-mode bypass below.
+  const lastRadarUrl = useRef<string | null>(null);
 
   // County-name → polygon lookup, populated once the bundled counties
   // GeoJSON finishes loading. Used to hydrate zone-only alerts (Tornado
@@ -613,6 +625,22 @@ export default function WeatherMap() {
       url = radarTileUrl(new Date(entry.generated_at));
     }
 
+    // Skip the crossfade entirely when the URL hasn't changed AND we're not in
+    // live mode. Historical / forecast URLs encode a timestamp — an identical
+    // URL really does mean identical tile content, so the previous behavior of
+    // re-firing `setTiles` whenever an unrelated dep flipped (e.g. the 30s
+    // history poll producing a fresh `history` array reference) was wasted
+    // work that invalidated the inactive radar source's tile pyramid for no
+    // visual change.
+    //
+    // Live mode is deliberately exempt: `radarTileUrl('live')` is a constant
+    // URL pointing at a continuously-refreshing Mesonet endpoint, so the 30s
+    // poll's setTiles invalidation IS the mechanism that pulls in fresh live
+    // radar. Deduping it would freeze the live view at whatever tile content
+    // landed on the first paint.
+    if (!isLive && url === lastRadarUrl.current) return;
+    lastRadarUrl.current = url;
+
     const current = activeRadar.current;
     const incoming = current === 'a' ? 'b' : 'a';
     const currentLayerId = `radar-${current}`;
@@ -701,6 +729,14 @@ export default function WeatherMap() {
       center: initialCenter,
       zoom: initialZoom,
       attributionControl: {},
+      // Bound GPU memory pressure. Default cache size is derived from viewport
+      // and on a full-screen map can grow unbounded across pan/zoom — combined
+      // with the dual radar raster sources + the bundled 8-state county vector
+      // source, that's enough to provoke Chromium's "context loss and was
+      // blocked" guard on integrated/mobile GPUs after a long session. 32
+      // tiles per source is plenty for the SeeStorm viewport range (zoom 5-12)
+      // while keeping the working set well under the GPU budget.
+      maxTileCacheSize: 32,
     });
 
     m.addControl(new maplibregl.NavigationControl(), 'top-right');
