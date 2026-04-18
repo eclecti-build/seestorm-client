@@ -299,23 +299,46 @@ export function alertTouchesPoint(
   userPoint: { lat: number; lon: number; state: string },
 ): boolean {
   const geom = alert.geometry;
-  if (
-    geom &&
-    typeof geom === 'object' &&
-    'type' in geom &&
-    (geom.type === 'Polygon' || geom.type === 'MultiPolygon')
-  ) {
-    try {
-      return booleanPointInPolygon(turfPoint([userPoint.lon, userPoint.lat]), geom);
-    } catch {
-      // Defensive: malformed coordinates / non-finite values fall through
-      // to the state-level fallback rather than throwing — a broken alert
-      // geometry shouldn't blank the feed.
-    }
+  // Zone-only alert (no geometry) — expected for Watches and broad
+  // Advisories. Fall through silently to the state-level match; this is
+  // the documented degradation path, not a degraded scenario.
+  if (geom === null || geom === undefined) {
+    return alertTouchesState(alert, userPoint.state);
   }
-  // Zone-only (no polygon) or unsupported geometry: preserve visibility
-  // for products that affect the user's state. A user in IL still wants to
-  // see an Illinois-wide Tornado Watch even though it has no polygon.
+  if (typeof geom === 'object' && 'type' in geom) {
+    if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+      try {
+        return booleanPointInPolygon(turfPoint([userPoint.lon, userPoint.lat]), geom);
+      } catch (err) {
+        // Malformed coordinates / non-finite values: log so we can spot
+        // upstream regressions in NWS payload quality, then fall back to
+        // the state-level filter. This is fail-OPEN by design — a public
+        // safety product should over-show a relevant warning rather than
+        // hide it because of one bad coordinate. The log surface lets
+        // operators see in CF analytics if upstream geometry quality
+        // degrades.
+        console.warn(
+          '[alerts] alertTouchesPoint: PiP failed for alert',
+          alert.nws_id,
+          '— falling back to state match',
+          err,
+        );
+        return alertTouchesState(alert, userPoint.state);
+      }
+    }
+    // Unsupported geometry type on an alert that DOES carry geometry —
+    // not the Watch case (handled above). NWS warning products ship
+    // Polygon/MultiPolygon by spec; anything else is a payload regression.
+    // Log and fall back to state, same fail-open posture as the malformed
+    // case above.
+    console.warn(
+      '[alerts] alertTouchesPoint: unsupported geometry type',
+      geom.type,
+      'for alert',
+      alert.nws_id,
+      '— falling back to state match',
+    );
+  }
   return alertTouchesState(alert, userPoint.state);
 }
 

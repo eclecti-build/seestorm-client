@@ -381,6 +381,40 @@ describe('alertTouchesPoint', () => {
     expect(alertTouchesPoint(multi, { lat: 35.0, lon: -85.0, state: 'TN' })).toBe(false);
   });
 
+  it('treats boundary points as inside (turf default ignoreBoundary=false)', () => {
+    // STUB_GEOMETRY edge: lon = -89.4 between lat 42.5..42.6 inclusive.
+    // booleanPointInPolygon's documented default is to count boundary
+    // points as inside; locking that down here so a future Turf upgrade
+    // or an `ignoreBoundary: true` change can't silently flip behavior
+    // for users whose ZIP centroid lands on a county/warning boundary.
+    const onEdge = { lat: 42.55, lon: -89.4, state: 'WI' };
+    expect(alertTouchesPoint(ingest(), onEdge)).toBe(true);
+  });
+
+  it('treats reverse-winding polygons identically to canonical winding', () => {
+    // Same coords, traversed in opposite (clockwise vs counter-clockwise)
+    // order. NWS occasionally ships either winding direction; turf's PiP
+    // is winding-agnostic. Locking it down so a future "validate winding"
+    // change can't drop alerts for ZIPs in correctly-shaped-but-reversed
+    // polygons.
+    const reversed = ingest({
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [-89.5, 42.5],
+            [-89.5, 42.6],
+            [-89.4, 42.6],
+            [-89.4, 42.5],
+            [-89.5, 42.5],
+          ],
+        ],
+      },
+    });
+    const inside = { lat: 42.55, lon: -89.45, state: 'WI' };
+    expect(alertTouchesPoint(reversed, inside)).toBe(true);
+  });
+
   it('falls through to state match for unsupported geometry types (defensive)', () => {
     // Point geometry shouldn't crash the PiP — it should just fail the
     // polygon test and defer to state-level matching.
