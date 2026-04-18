@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { listNewestHistoryEntries, type R2BucketListOnly } from './index';
+import { listNewestHistoryEntries, parsePerStateCode, type R2BucketListOnly } from './index';
 // R2ListOptions / R2Object / R2Objects are declared globally by
 // @cloudflare/workers-types. We import the namespace explicitly so this
 // test file stays compilable even if Vitest's tsconfig resolution drifts
@@ -315,4 +315,52 @@ describe('listNewestHistoryEntries', () => {
       generated_at: '2026-04-17T00:00:00Z',
     });
   });
+});
+
+// Per-state route validation. The worker MUST reject anything that doesn't
+// match the exact `{STATE}.json` shape — accepting arbitrary path segments
+// here would let clients ask for arbitrary R2 objects under our prefix.
+describe('parsePerStateCode', () => {
+  const valid: Array<[string, string]> = [
+    ['/v1/active-events/WI.json', 'WI'],
+    ['/v1/active-events/IL.json', 'IL'],
+    ['/v1/active-events/MN.json', 'MN'],
+    ['/v1/active-events/NY.json', 'NY'],
+  ];
+  for (const [path, state] of valid) {
+    it(`accepts ${path}`, () => {
+      expect(parsePerStateCode(path)).toBe(state);
+    });
+  }
+
+  const invalid = [
+    // Wrong prefix
+    '/v1/history/WI.json',
+    '/active-events/WI.json',
+    // Lowercase / mixed case — must be uppercase USPS
+    '/v1/active-events/wi.json',
+    '/v1/active-events/Wi.json',
+    // Wrong length
+    '/v1/active-events/WIS.json',
+    '/v1/active-events/W.json',
+    '/v1/active-events/.json',
+    // Missing extension
+    '/v1/active-events/WI',
+    '/v1/active-events/WI.JSON',
+    // Path traversal / nested segments
+    '/v1/active-events/WI/IL.json',
+    '/v1/active-events/../active-events.json',
+    '/v1/active-events//IL.json',
+    // Query soup glued onto the path
+    '/v1/active-events/WI.json?foo=bar', // pathname only — querystring lives elsewhere; covered for safety
+    // Non-ASCII / suspicious characters
+    '/v1/active-events/W%I.json',
+    '/v1/active-events/WI .json',
+    '/v1/active-events/W I.json',
+  ];
+  for (const path of invalid) {
+    it(`rejects ${JSON.stringify(path)}`, () => {
+      expect(parsePerStateCode(path)).toBeNull();
+    });
+  }
 });
