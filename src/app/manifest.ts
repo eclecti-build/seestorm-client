@@ -7,7 +7,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'SeeStorm',
     short_name: 'SeeStorm',
-    description: 'Ad-free, real-time severe weather visualization for Wisconsin communities.',
+    description: 'Ad-free, real-time severe weather visualization for Great Lakes communities.',
     start_url: '/',
     display: 'standalone',
     background_color: '#0A0F1A',

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-SeeStorm is a two-repo non-profit application providing ad-free severe weather visualization for Wisconsin communities. It ingests public NWS data, archives it permanently, and presents it on an interactive map.
+SeeStorm is a two-repo non-profit application providing ad-free severe weather visualization for Great Lakes communities. It ingests public NWS data, archives it permanently, and presents it on an interactive map.
 
 | Repo | Purpose | Stack |
 |------|---------|-------|

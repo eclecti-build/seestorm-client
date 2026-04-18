@@ -1,6 +1,6 @@
 # SeeStorm Frontend
 
-Non-profit severe weather visualization for Wisconsin communities.
+Non-profit severe weather visualization for Great Lakes communities.
 
 ## Stack
 - Next.js (App Router) with static export
