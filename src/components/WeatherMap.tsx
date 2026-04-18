@@ -20,6 +20,8 @@ import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import { boostBasemapContrast } from '@/lib/mapContrast';
 import { alertLayerFilter } from '@/lib/alertFilter';
 import { getUserLocation } from '@/lib/userLocation';
+import { applyGeoDefaultIfNeeded } from '@/lib/geoDefault';
+import { STATE_VIEW_ZOOM } from '@/lib/coverage';
 import { uspsToFips } from '@/lib/stateFips';
 import AlertsPanel from './AlertsPanel';
 import LocationChip from './LocationChip';
@@ -228,12 +230,62 @@ export default function WeatherMap() {
   // User's saved state (if any) — drives the userState filter so the side
   // panel and map don't drown the user in alerts from the other 7 Great
   // Lakes states. Hydrated from localStorage after mount to stay SSR-safe.
+  // If nothing is saved, we ask the Worker's `/v1/geo` endpoint for a
+  // best-effort IP-derived default — silently no-op on any failure mode so
+  // the picker stays empty (matches the post-county-fix baseline).
   const [userState, setUserStateLocal] = useState<string | null>(null);
+  // `pendingGeoDefault` holds the location resolved from the IP fetch on
+  // first visit so the post-mapReady effect below can fly the map and apply
+  // the county filter — both of which depend on the MapLibre instance being
+  // initialized, which doesn't happen until the load handler fires.
+  const pendingGeoDefaultRef = useRef<{ state: string; lat: number; lon: number } | null>(null);
   useEffect(() => {
     const loc = getUserLocation();
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration from localStorage
-    setUserStateLocal(loc?.state ?? null);
+    if (loc) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration from localStorage
+      setUserStateLocal(loc.state);
+      return;
+    }
+    // No saved location — try the IP-based default. Cancellation guard
+    // prevents a late-arriving fetch from clobbering a manual pick the user
+    // made in the meantime (e.g. they opened the chip and picked a state
+    // before /v1/geo returned).
+    let cancelled = false;
+    void applyGeoDefaultIfNeeded().then((outcome) => {
+      if (cancelled) return;
+      if (outcome.kind !== 'applied') return;
+      // Race guard: if a manual pick landed during the fetch, defer to it.
+      const current = getUserLocation();
+      if (current && current.source !== 'ip') return;
+      pendingGeoDefaultRef.current = {
+        state: outcome.location.state,
+        lat: outcome.location.lat,
+        lon: outcome.location.lon,
+      };
+      setUserStateLocal(outcome.location.state);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+  // Once both the map is ready AND we have a pending IP-derived default,
+  // fly to the inferred state and apply the county filter. Kept separate
+  // from the localStorage hydration effect because either input can resolve
+  // first — we wait for both before touching MapLibre.
+  useEffect(() => {
+    if (!mapReady) return;
+    const pending = pendingGeoDefaultRef.current;
+    if (!pending) return;
+    const m = map.current;
+    if (!m) return;
+    pendingGeoDefaultRef.current = null;
+    applyCountyFilter(m, pending.state);
+    m.flyTo({
+      center: [pending.lon, pending.lat],
+      zoom: STATE_VIEW_ZOOM,
+      duration: 800,
+    });
+  }, [mapReady, userState]);
   // Keep the latest filter state in a ref so async fetch callbacks read the
   // current value without re-creating themselves on every change (which would
   // tear down the polling interval).

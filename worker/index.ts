@@ -367,17 +367,32 @@ function parseHistoryKey(key: string): HistoryEntry | null {
  * have and let the client decide whether the suggestion is good enough to
  * pre-fill.
  *
+ * `state` is the USPS 2-letter code (`cf.regionCode`, e.g. "WI") — NOT the
+ * full region name (`cf.region` — "Wisconsin"). The client compares this
+ * against its USPS-keyed coverage map (MN/WI/IL/IN/MI/OH/PA/NY) to decide
+ * whether to pre-fill the picker, so the code form is the only one that
+ * actually matches against supported states.
+ *
  * The IP-derived ZIP is the *postal code at the IP geolocation endpoint*,
  * which is sometimes a regional code, not the user's actual home ZIP. The
  * client UI must label this as a "guess" rather than treating it as
  * authoritative — see LocationBanner for the manual-override path.
+ *
+ * Exported for unit testing — the prod call site (`/v1/geo`) is the only
+ * runtime caller, but inverting control here lets tests inject a synthetic
+ * `request.cf` without standing up a Workers runtime fixture.
  */
-function serveGeoSuggestion(request: Request): Response {
+export function serveGeoSuggestion(request: Request): Response {
   // Cloudflare's typed `request.cf` is `IncomingRequestCfProperties`. Some
-  // fields (postalCode, region) are documented as `string` but can be empty.
+  // fields (postalCode, regionCode, region) are documented as `string` but
+  // can be empty for clients CF can't geolocate.
   const cf = (request as unknown as { cf?: Record<string, unknown> }).cf ?? {};
   const zipRaw = typeof cf.postalCode === 'string' ? cf.postalCode : '';
-  const stateRaw = typeof cf.region === 'string' ? cf.region : '';
+  // `regionCode` is the USPS 2-letter abbreviation ("WI"); `region` is the
+  // full state name ("Wisconsin"). The client matches against the code
+  // form, so prefer regionCode and fall back to "" rather than mixing in
+  // the long form (which would never match the coverage allowlist).
+  const stateRaw = typeof cf.regionCode === 'string' ? cf.regionCode : '';
   const latRaw = typeof cf.latitude === 'string' ? cf.latitude : '';
   const lonRaw = typeof cf.longitude === 'string' ? cf.longitude : '';
 
