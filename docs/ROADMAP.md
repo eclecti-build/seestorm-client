@@ -2,7 +2,7 @@
 
 ## Phase 1 — MVP (Current)
 
-The minimum viable product: a live weather map for Wisconsin that anyone can open on their phone during severe weather.
+The minimum viable product: a live weather map for the Great Lakes that anyone can open on their phone during severe weather.
 
 - [x] Next.js frontend with MapLibre GL JS
 - [x] NWS active alert polygon rendering (color-coded by event type)

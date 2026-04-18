@@ -2,7 +2,7 @@
 
 ## Overview
 
-SeeStorm is an ad-free, non-profit severe weather visualization platform for Wisconsin communities. It provides real-time tornado warnings, storm paths, and radar overlays using public NWS data.
+SeeStorm is an ad-free, non-profit severe weather visualization platform for Great Lakes communities. It provides real-time tornado warnings, storm paths, and radar overlays using public NWS data.
 
 ## System Architecture
 

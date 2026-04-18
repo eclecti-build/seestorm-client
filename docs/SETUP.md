@@ -15,7 +15,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 — you'll see a dark map of Wisconsin with live NWS warnings and radar.
+Open http://localhost:3000 — you'll see a dark map of the Great Lakes with live NWS warnings and radar.
 
 ## Environment Variables
 
