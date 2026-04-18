@@ -1,120 +1,111 @@
 'use client';
 
-// LocationChip — compact collapsible control below AlertsPanel that lets
-// users set a home ZIP. Styled like MapLegend (small bubble, header + ▸/▾
-// chevron, body only rendered when open) so it sits unobtrusively in the
-// top-left panel stack rather than overlaying the map as a card.
+// LocationChip — compact collapsible state picker below AlertsPanel.
+// Styled like MapLegend: one-line collapsed header + expandable body.
+// Clicking a state scopes the alerts list + map to that state via the
+// existing `userState` filter wired through WeatherMap.
 //
-// Two visual states:
-//   1. Collapsed — header-only bubble showing the saved ZIP as a chip, or
-//                  a "Set location" prompt when none is saved yet. One line.
-//   2. Expanded  — bubble grows to reveal the ZIP input + Save button, plus
-//                  error state and coverage footer.
+// This replaces the pre-2026-04-18 ZIP-entry flow. The underlying
+// `userLocation.ts` store kept ZIP support as optional so legacy saves
+// still hydrate correctly — we just render from `location.state` now.
+// A future county- or ZIP-precision scope can reintroduce ZIP entry
+// alongside this picker without re-touching persistence.
 //
-// There is intentionally no dismiss/hide — MapLegend follows the same
-// always-visible rule. A persistent hide proved to be a UX trap in the
-// previous LocationBanner: once a user clicked ×, the banner was gone for
-// good until they cleared localStorage by hand. Collapsed is already just
-// one line, so there's nothing for a dismiss button to buy us.
-//
-// All persistence flows through `userLocation.ts` so this component and
-// WeatherMap stay in sync via the storage event.
+// Two visual states (no dismiss — MapLegend follows the same always-
+// visible rule, and the collapsed chip is one line):
+//   1. Collapsed — `LOCATION  All states ▸` or `LOCATION  WI ▸`.
+//   2. Expanded  — 8-button grid for MN / WI / IL / IN / MI / OH / PA / NY,
+//                  plus a "Show all states" action when a state is selected.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   clearUserLocation,
   setUserLocation,
   useUserLocation,
   type UserLocation,
 } from '@/lib/userLocation';
-import { lookupZip, normalizeZip } from '@/lib/zipLookup';
+
+// Approximate geographic centers of each covered state — used to recenter
+// the map when the user picks a state. Pairs with `STATE_VIEW_ZOOM` (emitted
+// via `onLocationChange.zoom`) to give a whole-state view rather than the
+// city-level zoom the old ZIP flow used.
+const STATE_CENTERS: Record<string, { lat: number; lon: number }> = {
+  MN: { lat: 46.3, lon: -94.3 },
+  WI: { lat: 44.5, lon: -89.5 },
+  IL: { lat: 40.0, lon: -89.0 },
+  IN: { lat: 39.9, lon: -86.3 },
+  MI: { lat: 44.3, lon: -85.6 },
+  OH: { lat: 40.4, lon: -82.8 },
+  PA: { lat: 40.9, lon: -77.8 },
+  NY: { lat: 42.9, lon: -75.5 },
+};
+
+const COVERAGE: ReadonlyArray<keyof typeof STATE_CENTERS> = [
+  'MN',
+  'WI',
+  'IL',
+  'IN',
+  'MI',
+  'OH',
+  'PA',
+  'NY',
+];
+
+// Zoom that fits a single state in the viewport. The old ZIP flow used
+// level 8 (≈ city/county) which is too tight when we can only resolve to
+// state granularity.
+const STATE_VIEW_ZOOM = 6;
 
 type Mode = 'collapsed' | 'expanded';
 
 interface LocationChipProps {
   /**
-   * Fired whenever the saved location changes (set or cleared). Keeps the
-   * map's userState filter in sync without requiring the parent to
-   * subscribe to localStorage events itself.
+   * Fired whenever the saved location changes (set or cleared). Passes an
+   * optional `zoom` hint so WeatherMap can pick an appropriate fly-to zoom
+   * for state-level picks (≈ 6) vs. legacy ZIP picks (≈ 8).
    */
-  onLocationChange?: (next: { state: string; lat: number; lon: number } | null) => void;
+  onLocationChange?: (
+    next: { state: string; lat: number; lon: number; zoom?: number } | null,
+  ) => void;
 }
 
 export default function LocationChip({ onLocationChange }: LocationChipProps) {
   const { location, hydrated } = useUserLocation();
   const [mode, setMode] = useState<Mode>('collapsed');
-  const [zipInput, setZipInput] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  // Mirror the saved ZIP into the input so editing starts from the current
-  // value instead of an empty field. Kept in an effect (rather than derived
-  // state) so manual edits aren't overwritten while the user is typing.
-  useEffect(() => {
-    if (!hydrated) return;
-    if (location) {
-      setZipInput(location.zip);
-    }
-  }, [hydrated, location]);
-
-  const submit = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      setError(null);
-      const normalized = normalizeZip(zipInput);
-      if (!normalized) {
-        setError('Enter a 5-digit ZIP code.');
-        return;
-      }
-      setBusy(true);
-      try {
-        const record = await lookupZip(normalized);
-        if (!record) {
-          setError(
-            `ZIP ${normalized} isn't in our coverage area (MN, WI, IL, IN, MI, OH, PA, NY).`,
-          );
-          return;
-        }
-        const next: UserLocation = {
-          zip: normalized,
-          state: record.state,
-          lat: record.lat,
-          lon: record.lon,
-          source: 'manual',
-          setAt: Date.now(),
-        };
-        setUserLocation(next);
-        setMode('collapsed');
-        onLocationChange?.({ state: record.state, lat: record.lat, lon: record.lon });
-      } catch (err) {
-        console.error('ZIP lookup failed', err);
-        setError('Could not load ZIP table. Try again in a moment.');
-      } finally {
-        setBusy(false);
-      }
+  const handlePick = useCallback(
+    (state: keyof typeof STATE_CENTERS) => {
+      const center = STATE_CENTERS[state];
+      const next: UserLocation = {
+        state,
+        lat: center.lat,
+        lon: center.lon,
+        source: 'manual',
+        setAt: Date.now(),
+      };
+      setUserLocation(next);
+      setMode('collapsed');
+      onLocationChange?.({ state, lat: center.lat, lon: center.lon, zoom: STATE_VIEW_ZOOM });
     },
-    [zipInput, onLocationChange],
+    [onLocationChange],
   );
 
   const handleClear = useCallback(() => {
     clearUserLocation();
-    setZipInput('');
-    // Stay expanded after clear so the user can enter a different ZIP
-    // without a second click.
-    setMode('expanded');
     onLocationChange?.(null);
   }, [onLocationChange]);
 
-  // Render nothing until hydration finishes (avoids SSR/CSR mismatch from
-  // the localStorage read in useUserLocation).
+  // Render nothing until hydration finishes to avoid SSR/CSR mismatch from
+  // the localStorage read in useUserLocation.
   if (!hydrated) return null;
 
   const open = mode === 'expanded';
-  const summary = location ? `${location.zip} · ${location.state}` : 'Set location';
+  const selectedState = location?.state?.toUpperCase() ?? null;
+  const summary = selectedState ?? 'All states';
 
   return (
     <div
-      className="bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 text-xs overflow-hidden max-w-[15rem]"
+      className="bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 text-xs overflow-hidden max-w-[18rem]"
       role="region"
       aria-label="Location filter"
     >
@@ -136,51 +127,37 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
 
       {open && (
         <div id="location-chip-body" className="px-3 pb-3 pt-1 space-y-2">
-          {location && (
-            <div className="flex items-center justify-between gap-2 text-[11px] text-gray-400">
-              <span>Filtering alerts to {location.state}.</span>
-              <button
-                type="button"
-                onClick={handleClear}
-                className="text-gray-400 hover:text-white underline-offset-2 hover:underline"
-              >
-                Clear
-              </button>
-            </div>
-          )}
+          <div className="text-[11px] text-gray-400">Pick your state to scope the alerts list.</div>
 
-          <form onSubmit={submit}>
-            <label htmlFor="zip-chip-input" className="sr-only">
-              Enter ZIP code
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                id="zip-chip-input"
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={10}
-                value={zipInput}
-                onChange={(e) => setZipInput(e.target.value)}
-                placeholder="ZIP"
-                className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
-                aria-invalid={error !== null}
-                autoComplete="postal-code"
-              />
-              <button
-                type="submit"
-                disabled={busy}
-                className="px-3 py-1 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {busy ? '…' : 'Save'}
-              </button>
-            </div>
-          </form>
+          <div className="grid grid-cols-4 gap-1">
+            {COVERAGE.map((state) => {
+              const active = selectedState === state;
+              return (
+                <button
+                  key={state}
+                  type="button"
+                  onClick={() => handlePick(state)}
+                  aria-pressed={active}
+                  className={`px-2 py-1.5 rounded font-mono text-xs font-semibold transition-colors ${
+                    active
+                      ? 'bg-blue-600 text-white hover:bg-blue-500'
+                      : 'bg-gray-800 text-gray-200 hover:bg-gray-700'
+                  }`}
+                >
+                  {state}
+                </button>
+              );
+            })}
+          </div>
 
-          {error && (
-            <div className="text-[11px] text-red-400" role="alert">
-              {error}
-            </div>
+          {selectedState && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="w-full text-[11px] text-gray-400 hover:text-white underline-offset-2 hover:underline text-left"
+            >
+              Show all states
+            </button>
           )}
 
           <div className="text-[10px] text-gray-500 pt-1 border-t border-gray-800">
