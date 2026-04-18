@@ -300,6 +300,23 @@ describe('alertTouchesState', () => {
   it('returns true when the alert has no state metadata (legacy v1 fallback)', () => {
     expect(alertTouchesState(ingest({ area_state: null }), 'WI')).toBe(true);
   });
+
+  // Regression: on 2026-04-17 a WI Flood Watch shipped with `states: []`
+  // because ingest couldn't derive states for that zone-aggregate product.
+  // The strict v2 path dropped it for every WI user with a saved ZIP — a
+  // live safety product was hidden. Empty array must be treated the same
+  // as a missing field and fall through to the v1 "can't filter" path.
+  it('returns true when states[] is empty and area_state is missing', () => {
+    expect(alertTouchesState(ingest({ area_state: null, states: [] }), 'WI')).toBe(true);
+    expect(alertTouchesState(ingest({ states: [] }), 'WI')).toBe(true);
+  });
+
+  it('still respects area_state when states[] is empty but area_state is present', () => {
+    // Empty states[] doesn't mean "ignore everything" — if area_state is
+    // populated, strict matching still applies.
+    expect(alertTouchesState(ingest({ area_state: 'WI', states: [] }), 'WI')).toBe(true);
+    expect(alertTouchesState(ingest({ area_state: 'IL', states: [] }), 'WI')).toBe(false);
+  });
 });
 
 describe('buildAlertViews — userState filter', () => {
