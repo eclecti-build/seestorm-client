@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  listNewestHistoryEntries,
-  parsePerStateCode,
-  type R2BucketListOnly,
-} from './index';
+import { listNewestHistoryEntries, parsePerStateCode, type R2BucketListOnly } from './index';
 // R2ListOptions / R2Object / R2Objects are declared globally by
 // @cloudflare/workers-types. We import the namespace explicitly so this
 // test file stays compilable even if Vitest's tsconfig resolution drifts
