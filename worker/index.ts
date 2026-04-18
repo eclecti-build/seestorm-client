@@ -159,34 +159,78 @@ export type R2BucketListOnly = Pick<R2Bucket, 'list'>;
 /** R2 list page size — the per-page maximum the Workers runtime supports. */
 const R2_LIST_PAGE_SIZE = 1000;
 
+/** Cadence at which ingest writes history snapshots (seconds). */
+const HISTORY_INTERVAL_SECONDS = 30;
+
+/**
+ * Safety multiplier on the bounded list window. Scanning 50% more keys than
+ * the caller asked for is cheap in R2 terms and absorbs ingest gaps plus
+ * clock skew between Worker and ingest (both NTP-synced, so skew is
+ * effectively sub-second — the margin is for missed 30 s slots).
+ */
+const HISTORY_WINDOW_MULTIPLIER = 1.5;
+
+/**
+ * Lower bound on the scanned window, for small-limit pathological cases
+ * (limit=1 would otherwise only look back 45 s, which is narrower than one
+ * ingest gap). 15 min gives any plausible small request enough slack.
+ */
+const HISTORY_MIN_WINDOW_SECONDS = 15 * 60;
+
 /**
  * Return the newest `limit` history entries in descending chronological order.
  *
  * R2 only returns keys in ascending lexicographic order and has no native
- * "list from the end" option. Naively listing with `limit: N` returns the
- * OLDEST N keys, not the newest — which was a long-latent bug. We instead
- * page through the full history/ listing and keep a rolling tail of the last
- * `limit` entries.
+ * "list from the end" option. We exploit the fact that history keys are
+ * lex-sortable timestamps (YYYYMMDDTHHMMSSZ) to set `startAfter` to the
+ * timestamp just before the window we care about — R2 seeks directly to that
+ * position, so list cost is bounded by window size, not bucket size. At the
+ * default limit of 240 (2 h slider) this scans ~360 keys — one R2 page, one
+ * class-A op — regardless of how long history has been retained.
  *
- * Cost: O(ceil(total_keys / R2_LIST_PAGE_SIZE)) list calls. At 30s ingest
- * cadence this grows by ~2,880 keys/day, so we should add an R2 lifecycle
- * rule to trim ancient history when the bucket gets large. Until then the
- * call is cheap and bounded.
+ * `now` is injectable for deterministic tests. In production it defaults to
+ * the current wall-clock time; ingest is NTP-synced so Worker and producer
+ * agree on "now" within sub-second tolerance.
  */
 export async function listNewestHistoryEntries(
   bucket: R2BucketListOnly,
   limit: number,
+  now: Date = new Date(),
 ): Promise<HistoryEntry[]> {
   if (limit <= 0) return [];
 
+  const windowSeconds = Math.max(
+    limit * HISTORY_INTERVAL_SECONDS * HISTORY_WINDOW_MULTIPLIER,
+    HISTORY_MIN_WINDOW_SECONDS,
+  );
+  const windowStart = new Date(now.getTime() - windowSeconds * 1000);
+
+  // startAfter is lexicographic and exclusive. The stem (no ".json" suffix)
+  // sorts BEFORE any real key at the same timestamp because '.' (0x2E) is
+  // less than every digit — so this seeks to exactly "keys at or after
+  // windowStart", inclusive of any key whose timestamp equals windowStart.
+  const startAfter = `history/${formatHistoryTimestamp(windowStart)}`;
+
+  // The window bound (limit × cadence × multiplier) is the load ceiling;
+  // at HISTORY_MAX_LIMIT=1000 the worst case is ~1500 keys = 2 pages. A
+  // hard page cap is defense-in-depth against upstream bugs (R2 contract
+  // violation, window mis-sized) rather than a load limiter — hitting it
+  // means something is wrong, not that there's "a lot of history". We
+  // throw so it surfaces in CF analytics instead of silently truncating.
+  const MAX_LIST_PAGES = 4;
+
   const tail: HistoryEntry[] = [];
   let cursor: string | undefined;
+  let pages = 0;
 
   do {
+    // Pass startAfter only on the first call; subsequent pages use cursor.
+    // R2 treats cursor + startAfter as an error / cursor-wins ambiguity, so
+    // avoid sending both.
     const page: R2Objects = await bucket.list({
       prefix: 'history/',
       limit: R2_LIST_PAGE_SIZE,
-      cursor,
+      ...(cursor ? { cursor } : { startAfter }),
     });
 
     for (const object of page.objects) {
@@ -196,10 +240,48 @@ export async function listNewestHistoryEntries(
       if (tail.length > limit) tail.shift();
     }
 
+    // R2 contract: `truncated === true` implies a `cursor` is returned.
+    // Defend against a violation — without this guard the loop would
+    // re-send `startAfter` forever and spin on the same page.
+    if (page.truncated && !page.cursor) {
+      throw new Error('listNewestHistoryEntries: R2 returned truncated=true without a cursor');
+    }
+
     cursor = page.truncated ? page.cursor : undefined;
+    pages += 1;
+
+    if (pages > MAX_LIST_PAGES) {
+      throw new Error(
+        `listNewestHistoryEntries: exceeded ${MAX_LIST_PAGES} pages ` +
+          `(limit=${limit}, windowSeconds=${windowSeconds}, nowIso=${now.toISOString()})`,
+      );
+    }
   } while (cursor);
 
   return tail.reverse();
+}
+
+/** Pad an integer to at least `w` digits with leading zeros. */
+function padInt(n: number, w = 2): string {
+  return n.toString().padStart(w, '0');
+}
+
+/**
+ * Format a Date as the compact timestamp ingest uses for history keys
+ * (YYYYMMDDTHHMMSSZ). Kept local to the Worker — ingest owns the canonical
+ * format in Go and this mirrors it.
+ */
+function formatHistoryTimestamp(d: Date): string {
+  return (
+    padInt(d.getUTCFullYear(), 4) +
+    padInt(d.getUTCMonth() + 1) +
+    padInt(d.getUTCDate()) +
+    'T' +
+    padInt(d.getUTCHours()) +
+    padInt(d.getUTCMinutes()) +
+    padInt(d.getUTCSeconds()) +
+    'Z'
+  );
 }
 
 interface HistoryEntry {
