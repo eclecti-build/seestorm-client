@@ -5,12 +5,17 @@
 // chevron, body only rendered when open) so it sits unobtrusively in the
 // top-left panel stack rather than overlaying the map as a card.
 //
-// Three visual states:
-//   1. Dismissed — null (renders nothing). Persists across reloads.
-//   2. Collapsed — header-only bubble showing the saved ZIP as a chip, or
+// Two visual states:
+//   1. Collapsed — header-only bubble showing the saved ZIP as a chip, or
 //                  a "Set location" prompt when none is saved yet. One line.
-//   3. Expanded  — bubble grows to reveal the ZIP input + Save button, plus
+//   2. Expanded  — bubble grows to reveal the ZIP input + Save button, plus
 //                  error state and coverage footer.
+//
+// There is intentionally no dismiss/hide — MapLegend follows the same
+// always-visible rule. A persistent hide proved to be a UX trap in the
+// previous LocationBanner: once a user clicked ×, the banner was gone for
+// good until they cleared localStorage by hand. Collapsed is already just
+// one line, so there's nothing for a dismiss button to buy us.
 //
 // All persistence flows through `userLocation.ts` so this component and
 // WeatherMap stay in sync via the storage event.
@@ -24,9 +29,7 @@ import {
 } from '@/lib/userLocation';
 import { lookupZip, normalizeZip } from '@/lib/zipLookup';
 
-const DISMISS_KEY = 'seestorm:location-banner-dismissed';
-
-type Mode = 'collapsed' | 'expanded' | 'dismissed';
+type Mode = 'collapsed' | 'expanded';
 
 interface LocationChipProps {
   /**
@@ -37,25 +40,6 @@ interface LocationChipProps {
   onLocationChange?: (next: { state: string; lat: number; lon: number } | null) => void;
 }
 
-function readDismissed(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem(DISMISS_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeDismissed(value: boolean): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (value) window.localStorage.setItem(DISMISS_KEY, '1');
-    else window.localStorage.removeItem(DISMISS_KEY);
-  } catch {
-    // ignore quota / private mode failures
-  }
-}
-
 export default function LocationChip({ onLocationChange }: LocationChipProps) {
   const { location, hydrated } = useUserLocation();
   const [mode, setMode] = useState<Mode>('collapsed');
@@ -63,16 +47,11 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Once hydration completes, pick the right initial mode without fighting
-  // SSR. Order matters: a prior dismissal wins over opening automatically,
-  // so returning users don't get the expanded form re-opened on every load.
+  // Mirror the saved ZIP into the input so editing starts from the current
+  // value instead of an empty field. Kept in an effect (rather than derived
+  // state) so manual edits aren't overwritten while the user is typing.
   useEffect(() => {
     if (!hydrated) return;
-    if (readDismissed()) {
-      setMode('dismissed');
-    } else {
-      setMode('collapsed');
-    }
     if (location) {
       setZipInput(location.zip);
     }
@@ -105,9 +84,6 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
           setAt: Date.now(),
         };
         setUserLocation(next);
-        // Chip persists going forward — clear any prior dismissal so the
-        // saved location stays visible after a successful save.
-        writeDismissed(false);
         setMode('collapsed');
         onLocationChange?.({ state: record.state, lat: record.lat, lon: record.lon });
       } catch (err) {
@@ -120,11 +96,6 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
     [zipInput, onLocationChange],
   );
 
-  const handleDismiss = useCallback(() => {
-    writeDismissed(true);
-    setMode('dismissed');
-  }, []);
-
   const handleClear = useCallback(() => {
     clearUserLocation();
     setZipInput('');
@@ -135,8 +106,8 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
   }, [onLocationChange]);
 
   // Render nothing until hydration finishes (avoids SSR/CSR mismatch from
-  // localStorage reads) and nothing when dismissed.
-  if (!hydrated || mode === 'dismissed') return null;
+  // the localStorage read in useUserLocation).
+  if (!hydrated) return null;
 
   const open = mode === 'expanded';
   const summary = location ? `${location.zip} · ${location.state}` : 'Set location';
@@ -212,16 +183,8 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
             </div>
           )}
 
-          <div className="flex items-center justify-between text-[10px] text-gray-500 pt-1 border-t border-gray-800">
-            <span>Coverage: MN, WI, IL, IN, MI, OH, PA, NY</span>
-            <button
-              type="button"
-              onClick={handleDismiss}
-              className="text-gray-500 hover:text-white"
-              title="Hide this panel"
-            >
-              Hide
-            </button>
+          <div className="text-[10px] text-gray-500 pt-1 border-t border-gray-800">
+            Coverage: MN, WI, IL, IN, MI, OH, PA, NY
           </div>
         </div>
       )}
