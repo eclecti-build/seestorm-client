@@ -294,6 +294,40 @@ export default function WeatherMap() {
     userStateRef.current = userState;
   }, [userState]);
 
+  // ZIP-precise point filter — populated when the saved location carries a
+  // `zip` field (signals "ZIP entry mode" vs "state picker mode"). When set,
+  // takes precedence over `userState` in buildAlertViews and gives pixel-
+  // precise filtering for polygon-bearing alerts (Warnings) while still
+  // surfacing zone-only alerts (Watches) at the user's state.
+  //
+  // Hydrated from localStorage in the same effect that hydrates `userState`
+  // (see below) so the two stay in lockstep — we never want a userPoint
+  // without a corresponding userState fallback.
+  const userPointRef = useRef<{ lat: number; lon: number; state: string } | null>(null);
+
+  // Sync userPointRef from any userLocation change (manual pick, geo default,
+  // cross-tab sync, ZIP entry). We listen to the same `seestorm:user-location-changed`
+  // event the userLocation hook fires.
+  useEffect(() => {
+    function syncUserPoint() {
+      const loc = getUserLocation();
+      if (loc && typeof loc.zip === 'string' && loc.zip.length > 0) {
+        // ZIP-precise mode: hydrate the point. lat/lon/state come straight
+        // from the saved record (ZIP picker writes ZCTA centroid + state).
+        userPointRef.current = { lat: loc.lat, lon: loc.lon, state: loc.state };
+      } else {
+        // State-picker mode (or cleared): leave point empty so the userState
+        // filter is the only one in effect.
+        userPointRef.current = null;
+      }
+    }
+    syncUserPoint();
+    window.addEventListener('seestorm:user-location-changed', syncUserPoint);
+    return () => {
+      window.removeEventListener('seestorm:user-location-changed', syncUserPoint);
+    };
+  }, []);
+
   // Fetch the live snapshot (/v1/active-events.json) — used when sliderValue is live.
   const fetchLive = useCallback(async () => {
     try {
@@ -304,6 +338,7 @@ export default function WeatherMap() {
       const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
         countyLookup: countyLookupRef.current ?? undefined,
         userState: userStateRef.current ?? undefined,
+        userPoint: userPointRef.current ?? undefined,
       });
       setAllAlerts(listAlerts);
       setSnapshotTime(new Date(snapshot.generated_at));
@@ -328,6 +363,7 @@ export default function WeatherMap() {
         const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
+          userPoint: userPointRef.current ?? undefined,
         });
         setAllAlerts(listAlerts);
         setSnapshotTime(new Date(snapshot.generated_at));

@@ -11,6 +11,8 @@
 //     visible on the map as multi-county fills even though NWS ships them
 //     without polygon geometry.
 
+import { booleanPointInPolygon, point as turfPoint } from '@turf/turf';
+
 // ---------------------------------------------------------------------------
 // Palette
 // ---------------------------------------------------------------------------
@@ -277,6 +279,46 @@ function byPriority(a: WeatherAlert, b: WeatherAlert): number {
  * snapshot states to broaden matching when nothing else resolves (e.g. accept
  * any alert in the snapshot when ingest didn't tag the alert at all).
  */
+/**
+ * True when the alert's polygon contains the user's coordinates, OR — for
+ * zone-only alerts (no polygon geometry) — when the alert touches the user's
+ * state. This lets us deliver pixel-precise filtering for the urgent
+ * polygon-bearing products (Tornado / Severe Thunderstorm / Flash Flood
+ * Warnings) while still surfacing broad zone-aggregate products (Watches,
+ * statewide Advisories) that affect the user's region but cover too large
+ * an area to have a polygon.
+ *
+ * The polygon path uses `@turf/boolean-point-in-polygon` and accepts both
+ * Polygon and MultiPolygon geometries (NWS commonly ships MultiPolygon for
+ * disjoint warning footprints). GeometryCollection and unsupported types
+ * fall through to the state-level fallback rather than throwing — defensive
+ * because malformed upstream geometry shouldn't blank the alert feed.
+ */
+export function alertTouchesPoint(
+  alert: IngestAlert,
+  userPoint: { lat: number; lon: number; state: string },
+): boolean {
+  const geom = alert.geometry;
+  if (
+    geom &&
+    typeof geom === 'object' &&
+    'type' in geom &&
+    (geom.type === 'Polygon' || geom.type === 'MultiPolygon')
+  ) {
+    try {
+      return booleanPointInPolygon(turfPoint([userPoint.lon, userPoint.lat]), geom);
+    } catch {
+      // Defensive: malformed coordinates / non-finite values fall through
+      // to the state-level fallback rather than throwing — a broken alert
+      // geometry shouldn't blank the feed.
+    }
+  }
+  // Zone-only (no polygon) or unsupported geometry: preserve visibility
+  // for products that affect the user's state. A user in IL still wants to
+  // see an Illinois-wide Tornado Watch even though it has no polygon.
+  return alertTouchesState(alert, userPoint.state);
+}
+
 export function alertTouchesState(alert: IngestAlert, userState: string): boolean {
   const target = userState.toUpperCase();
   const hasAreaState = typeof alert.area_state === 'string' && alert.area_state.length > 0;
@@ -315,8 +357,21 @@ export function buildAlertViews(
      * touch this state (USPS 2-letter, e.g. "WI"). Cross-border alerts whose
      * `states[]` includes the user's state are kept. When unset, every alert
      * in the snapshot is included.
+     *
+     * `userPoint` (when also set) takes precedence — the chip-level state
+     * pick is the coarse fallback while the ZIP-level point is the precise
+     * filter.
      */
     userState?: string;
+    /**
+     * When set, restrict to alerts whose polygon contains this point. Falls
+     * back to state-level matching for zone-only alerts (no polygon — e.g.
+     * Watches, broad Advisories), so the user still sees statewide products
+     * that affect their region. Takes precedence over `userState` when both
+     * are provided. Caller is responsible for hydrating this from a saved
+     * ZIP record (lat/lon/state).
+     */
+    userPoint?: { lat: number; lon: number; state: string };
     /**
      * USPS 2-letter codes used when synthesizing geometry from `area_desc`
      * for zone-only alerts. Defaults to the snapshot's `areas` (so a
@@ -337,7 +392,7 @@ export function buildAlertViews(
    */
   motionAlerts: IngestAlert[];
 } {
-  const { countyLookup, userState, allowedStates } = options;
+  const { countyLookup, userState, userPoint, allowedStates } = options;
   // Choose state filter for area_desc parsing. If the caller didn't pass one,
   // fall back to whatever the snapshot says it covers — for multi-state v2
   // snapshots this naturally lets cross-border watches hydrate against any
@@ -345,9 +400,14 @@ export function buildAlertViews(
   const resolvedAllowed: readonly string[] | undefined =
     allowedStates ?? (snapshot.areas.length > 0 ? snapshot.areas : undefined);
 
-  const filteredIngest = userState
-    ? snapshot.alerts.filter((a) => alertTouchesState(a, userState))
-    : snapshot.alerts;
+  // Filter precedence: userPoint (precise, ZIP-derived) wins over userState
+  // (coarse, picker-derived). Both are optional — when neither is set,
+  // every alert in the snapshot is included.
+  const filteredIngest = userPoint
+    ? snapshot.alerts.filter((a) => alertTouchesPoint(a, userPoint))
+    : userState
+      ? snapshot.alerts.filter((a) => alertTouchesState(a, userState))
+      : snapshot.alerts;
 
   const allAlerts = filteredIngest.map(ingestToWeatherAlert).sort(byPriority);
   const mapAlerts: WeatherAlert[] = [];
