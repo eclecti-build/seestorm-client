@@ -883,11 +883,14 @@ export default function WeatherMap() {
     }
   }
 
-  // Wired into LocationBanner: when the user sets/clears a ZIP, update the
+  // Wired into LocationChip: when the user picks/clears a state, update the
   // userState filter (re-derives the views on next fetch via refresh) and
-  // pan to the new coords so the map matches the choice.
+  // pan the map to match. `next.zoom` is an optional hint from the chip —
+  // state picks emit ~6 (whole-state view), legacy ZIP saves read back at
+  // USER_LOCATION_ZOOM (city-level). Falling back to USER_LOCATION_ZOOM
+  // keeps behavior correct for any caller that hasn't been updated yet.
   const handleLocationChange = useCallback(
-    (next: { state: string; lat: number; lon: number } | null) => {
+    (next: { state: string; lat: number; lon: number; zoom?: number } | null) => {
       // Update the ref synchronously BEFORE kicking off the refresh below.
       // The effect that mirrors `userState` -> `userStateRef.current` only runs
       // after the next render, but `refreshCurrentFrameRef.current?.()` reads
@@ -898,7 +901,8 @@ export default function WeatherMap() {
       const m = map.current;
       if (m) {
         if (next) {
-          m.flyTo({ center: [next.lon, next.lat], zoom: USER_LOCATION_ZOOM, duration: 800 });
+          const zoom = next.zoom ?? USER_LOCATION_ZOOM;
+          m.flyTo({ center: [next.lon, next.lat], zoom, duration: 800 });
         } else {
           m.flyTo({ center: MIDWEST_CENTER, zoom: MIDWEST_ZOOM, duration: 800 });
         }

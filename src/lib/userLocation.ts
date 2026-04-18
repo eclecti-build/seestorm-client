@@ -18,7 +18,13 @@ export const USER_LOCATION_KEY = 'seestorm:user-location';
 export type UserLocationSource = 'manual' | 'geo' | 'ip';
 
 export interface UserLocation {
-  zip: string;
+  /**
+   * Optional. Present when the user picked via ZIP entry (pre-2026-04-18
+   * LocationBanner/Chip). Absent when the user picked via the state selector.
+   * Kept readable so legacy saves don't need migration — the chip reads
+   * `state` and ignores this field.
+   */
+  zip?: string;
   state: string;
   lat: number;
   lon: number;
@@ -31,7 +37,7 @@ function isUserLocation(value: unknown): value is UserLocation {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
   return (
-    typeof v.zip === 'string' &&
+    (v.zip === undefined || typeof v.zip === 'string') &&
     typeof v.state === 'string' &&
     typeof v.lat === 'number' &&
     typeof v.lon === 'number' &&
