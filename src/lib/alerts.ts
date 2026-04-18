@@ -280,7 +280,13 @@ function byPriority(a: WeatherAlert, b: WeatherAlert): number {
 export function alertTouchesState(alert: IngestAlert, userState: string): boolean {
   const target = userState.toUpperCase();
   const hasAreaState = typeof alert.area_state === 'string' && alert.area_state.length > 0;
-  const hasStates = Array.isArray(alert.states);
+  // `states: []` is treated the same as a missing field. Ingest emits an
+  // empty array for zone-aggregate products (e.g. some Flood Watches) when
+  // per-alert state derivation fails. Those alerts still have a real
+  // `area_desc` covering the user's state, so dropping them silently hides
+  // live safety products — the fail-safe choice is to let them through and
+  // rely on the snapshot-level `areas` to bound scope.
+  const hasStates = Array.isArray(alert.states) && alert.states.length > 0;
 
   // If EITHER metadata field is present, this is a v2 record and we apply
   // strict matching. The two fields are union-OR'd: a cross-border alert
@@ -295,7 +301,8 @@ export function alertTouchesState(alert: IngestAlert, userState: string): boolea
     return false;
   }
 
-  // No state metadata on this alert (legacy v1 record): can't filter, so let it through.
+  // No usable state metadata (legacy v1 record, or v2 record with empty
+  // states[] and no area_state): can't filter safely, so let it through.
   return true;
 }
 
