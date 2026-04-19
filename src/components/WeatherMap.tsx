@@ -8,7 +8,7 @@ import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '
 import { buildMotionFeatures, setMotionVisibility } from '@/lib/stormMotion';
 import {
   buildAlertViews,
-  filterAreaDescByState,
+  deriveMultiStateDisplay,
   parseIngestSnapshot,
   WARNING_COLORS,
   colorForEvent,
@@ -1409,24 +1409,10 @@ export default function WeatherMap() {
       {/* Selected alert detail panel */}
       {selectedAlert &&
         (() => {
-          // Mirror the AlertsPanel card: display-only filter of cross-state
-          // counties, plus a badge when the alert spans more than one state.
-          const selectedAreaDesc = userState
-            ? filterAreaDescByState(selectedAlert.properties.areaDesc, userState).filtered
-            : selectedAlert.properties.areaDesc;
-          const selectedStates = selectedAlert.properties.states;
-          const selectedIsMultiState = Array.isArray(selectedStates) && selectedStates.length > 1;
-          let selectedRegionalLabel: string | null = null;
-          if (selectedIsMultiState && selectedStates) {
-            if (userState) {
-              const others = selectedStates.length - 1;
-              selectedRegionalLabel = `Regional — covers ${userState.toUpperCase()} + ${others} other ${
-                others === 1 ? 'state' : 'states'
-              }`;
-            } else {
-              selectedRegionalLabel = `Regional — covers ${selectedStates.length} states`;
-            }
-          }
+          // Mirror the AlertsPanel card via the shared helper so the popup
+          // and the side panel cannot drift on multi-state display rules.
+          const { areaDesc: selectedAreaDesc, regionalLabel: selectedRegionalLabel } =
+            deriveMultiStateDisplay(selectedAlert, userState ?? undefined);
           return (
             <div className="absolute top-[calc(1rem+env(safe-area-inset-top))] right-[calc(4rem+env(safe-area-inset-right))] max-w-sm bg-gray-900/95 text-white rounded-lg shadow-xl p-4 border border-gray-700">
               <button

@@ -323,6 +323,43 @@ export function filterAreaDescByState(
   return { filtered: kept.join('; '), wasFiltered: true };
 }
 
+/**
+ * Derive the display-only `areaDesc` + regional-coverage label for an alert
+ * card / popup. Centralizes the logic that both AlertsPanel's AlertCard and
+ * WeatherMap's selected-alert popup used to duplicate inline, so they can
+ * never drift.
+ *
+ * Pure: no React, no DOM. Returns:
+ *   - `areaDesc` — when `userState` is set, the county list trimmed via
+ *     `filterAreaDescByState`; otherwise the raw `areaDesc` unchanged.
+ *   - `regionalLabel` — null for single-state alerts (or when `states` is
+ *     missing); otherwise a short "Regional — covers …" badge string.
+ */
+export function deriveMultiStateDisplay(
+  alert: WeatherAlert,
+  userState: string | undefined,
+): { areaDesc: string; regionalLabel: string | null } {
+  const areaDesc = userState
+    ? filterAreaDescByState(alert.properties.areaDesc, userState).filtered
+    : alert.properties.areaDesc;
+
+  const states = alert.properties.states;
+  if (!Array.isArray(states) || states.length <= 1) {
+    return { areaDesc, regionalLabel: null };
+  }
+
+  let regionalLabel: string;
+  if (userState) {
+    const others = states.length - 1;
+    regionalLabel = `Regional — covers ${userState.toUpperCase()} + ${others} other ${
+      others === 1 ? 'state' : 'states'
+    }`;
+  } else {
+    regionalLabel = `Regional — covers ${states.length} states`;
+  }
+  return { areaDesc, regionalLabel };
+}
+
 function byPriority(a: WeatherAlert, b: WeatherAlert): number {
   return priorityForEvent(a.properties.event) - priorityForEvent(b.properties.event);
 }

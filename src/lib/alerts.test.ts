@@ -5,6 +5,7 @@ import {
   alertTouchesState,
   buildAlertViews,
   colorForEvent,
+  deriveMultiStateDisplay,
   FALLBACK_COLOR,
   FAMILY_ORDER,
   filterAreaDescByState,
@@ -16,6 +17,7 @@ import {
   tierForEvent,
   type IngestAlert,
   type IngestSnapshot,
+  type WeatherAlert,
 } from './alerts';
 import { buildCountyLookup } from './countyGeometry';
 
@@ -369,6 +371,75 @@ describe('filterAreaDescByState', () => {
     const out = filterAreaDescByState('Branch, MI; St. Joseph, MI', 'IN');
     expect(out.filtered).toBe('Branch, MI; St. Joseph, MI');
     expect(out.wasFiltered).toBe(false);
+  });
+});
+
+describe('deriveMultiStateDisplay', () => {
+  // Helper: build a minimal WeatherAlert with just the fields the derivation
+  // cares about. Geometry isn't relevant — this is pure display logic.
+  function view(areaDesc: string, states: string[] | undefined): WeatherAlert {
+    return {
+      type: 'Feature',
+      geometry: null,
+      properties: {
+        event: 'Freeze Warning',
+        headline: '',
+        description: '',
+        severity: '',
+        urgency: '',
+        effective: '',
+        expires: '',
+        senderName: '',
+        areaDesc,
+        url: null,
+        nwsId: null,
+        states,
+      },
+    };
+  }
+
+  it('returns null regionalLabel for a single-state alert', () => {
+    const out = deriveMultiStateDisplay(view('Dane, WI', ['WI']), 'WI');
+    expect(out.regionalLabel).toBeNull();
+    expect(out.areaDesc).toBe('Dane, WI');
+  });
+
+  it('returns null regionalLabel when states is missing', () => {
+    const out = deriveMultiStateDisplay(view('Dane', undefined), 'WI');
+    expect(out.regionalLabel).toBeNull();
+    expect(out.areaDesc).toBe('Dane');
+  });
+
+  it('uses singular "other state" when one additional state is covered', () => {
+    const out = deriveMultiStateDisplay(view('Elkhart, IN; Branch, MI', ['IN', 'MI']), 'IN');
+    expect(out.regionalLabel).toBe('Regional — covers IN + 1 other state');
+  });
+
+  it('uses plural "other states" when two+ additional states are covered', () => {
+    const out = deriveMultiStateDisplay(
+      view('Elkhart, IN; Branch, MI; Lucas, OH', ['IN', 'MI', 'OH']),
+      'IN',
+    );
+    expect(out.regionalLabel).toBe('Regional — covers IN + 2 other states');
+  });
+
+  it('falls back to the N-states summary when userState is undefined', () => {
+    const out = deriveMultiStateDisplay(
+      view('Elkhart, IN; Branch, MI; Lucas, OH', ['IN', 'MI', 'OH']),
+      undefined,
+    );
+    expect(out.regionalLabel).toBe('Regional — covers 3 states');
+    // No userState ⇒ areaDesc passes through untouched.
+    expect(out.areaDesc).toBe('Elkhart, IN; Branch, MI; Lucas, OH');
+  });
+
+  it('filters cross-state suffixes out of areaDesc when userState is set', () => {
+    const out = deriveMultiStateDisplay(
+      view('Elkhart, IN; Branch, MI; St. Joseph, MI', ['IN', 'MI']),
+      'IN',
+    );
+    expect(out.areaDesc).toBe('Elkhart, IN');
+    expect(out.regionalLabel).toBe('Regional — covers IN + 1 other state');
   });
 });
 

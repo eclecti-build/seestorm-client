@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   colorForEvent,
-  filterAreaDescByState,
+  deriveMultiStateDisplay,
   groupByFamily,
   tierForEvent,
   type AlertFamily,
@@ -50,30 +50,12 @@ function AlertCard({
   const url = alert.properties.url;
 
   // Trim cross-border counties from the rendered areaDesc when we know the
-  // user's state. The underlying filter (`alertTouchesState`) is unchanged —
-  // this is display-only cleanup for multi-state NWS products that list
-  // counties in Indiana + Michigan + Ohio when the user only cares about
-  // their own state.
-  const areaDesc = userState
-    ? filterAreaDescByState(alert.properties.areaDesc, userState).filtered
-    : alert.properties.areaDesc;
-
-  // Badge multi-state alerts so users understand the alert also covers
-  // other states — important context when we filter the county list down
-  // to just theirs.
-  const states = alert.properties.states;
-  const isMultiState = Array.isArray(states) && states.length > 1;
-  let regionalLabel: string | null = null;
-  if (isMultiState && states) {
-    if (userState) {
-      const others = states.length - 1;
-      regionalLabel = `Regional — covers ${userState.toUpperCase()} + ${others} other ${
-        others === 1 ? 'state' : 'states'
-      }`;
-    } else {
-      regionalLabel = `Regional — covers ${states.length} states`;
-    }
-  }
+  // user's state, and badge multi-state alerts so users understand the
+  // alert also covers other states. Both derivations live in
+  // `deriveMultiStateDisplay` so the selected-alert popup in WeatherMap
+  // stays in lockstep. The underlying filter (`alertTouchesState`) is
+  // unchanged — this is display-only cleanup.
+  const { areaDesc, regionalLabel } = deriveMultiStateDisplay(alert, userState);
 
   return (
     <button
