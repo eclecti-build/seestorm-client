@@ -118,16 +118,17 @@ const CSP_POLICY = [
   // policy via middleware as a follow-up hardening pass.
   "script-src 'self' 'unsafe-inline'",
   // Tailwind / component inline styles.
-  "style-src 'self' 'unsafe-inline'",
-  // Inter is self-hosted via next/font.
-  "font-src 'self'",
-  "img-src 'self' data:",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  // Inter is self-hosted via next/font; Google Fonts pulled in by next/font/google.
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: https://*.basemaps.cartocdn.com https://mesonet.agron.iastate.edu https://tiles.stadiamaps.com https://data.seestorm.org",
   // MapLibre geojson-vt spawns a blob: worker for tile parsing.
   'worker-src blob:',
-  // Upstreams: Iowa Mesonet radar, CartoDB basemap, Stadia dev basemap,
-  // SeeStorm R2-backed Protomaps (subdomain provisioned by Sean — CAA on
-  // seestorm.org limits issuance to LE + GTS), and NWS MVP fallback.
-  "connect-src 'self' https://mesonet.agron.iastate.edu https://basemaps.cartocdn.com https://tiles.stadiamaps.com https://data.seestorm.org https://api.weather.gov",
+  // Upstreams: Iowa Mesonet radar, CartoDB basemap (wildcard covers
+  // tiles-{a..d}.basemaps.cartocdn.com shard rotations), Stadia dev
+  // basemap, SeeStorm R2-backed Protomaps (subdomain provisioned by Sean —
+  // CAA on seestorm.org limits issuance to LE + GTS), and NWS MVP fallback.
+  "connect-src 'self' https://mesonet.agron.iastate.edu https://*.basemaps.cartocdn.com https://tiles.stadiamaps.com https://data.seestorm.org https://api.weather.gov",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
