@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import {
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import worker, {
+  handleCspReport,
   listNewestHistoryEntries,
   parsePerStateCode,
   serveGeoSuggestion,
+  type Env,
   type R2BucketListOnly,
 } from './index';
 // R2ListOptions / R2Object / R2Objects are declared globally by
@@ -462,5 +464,205 @@ describe('serveGeoSuggestion', () => {
     );
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.state).toBe('');
+  });
+});
+
+/**
+ * Minimal Env stub for exercising the top-level worker.fetch handler. R2 is
+ * stubbed with a bucket returning a tiny synthetic JSON object for the
+ * active-events key; ASSETS is a fake that always returns a simple HTML
+ * body so the fall-through branch is testable without Next's build output.
+ */
+function fakeEnv(): Env {
+  const activePayload = new TextEncoder().encode('{"type":"FeatureCollection"}');
+  const bucket: Pick<R2Bucket, 'get'> = {
+    async get(key: string) {
+      if (key === 'active-events.json') {
+        // Minimal R2ObjectBody-like shape. Only the fields the Worker reads
+        // are populated.
+        const obj = {
+          key,
+          httpEtag: '"stub-etag"',
+          size: activePayload.byteLength,
+          body: new Response(activePayload).body,
+          writeHttpMetadata(h: Headers) {
+            h.set('content-type', 'application/json; charset=utf-8');
+          },
+        } as unknown as R2ObjectBody;
+        return obj;
+      }
+      return null;
+    },
+  };
+  const assets: Fetcher = {
+    async fetch() {
+      return new Response('<!doctype html><html><body>root</body></html>', {
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    },
+  } as unknown as Fetcher;
+  return { SNAPSHOTS: bucket as unknown as R2Bucket, ASSETS: assets };
+}
+
+describe('security headers — baseline + CSP Report-Only', () => {
+  it('applies all six headers on GET /v1/active-events.json (R2-proxied JSON)', async () => {
+    // Happy path: the primary public snapshot endpoint MUST carry the full
+    // hardening set. CSP is Report-Only and must not be the enforcing header.
+    const req = new Request('https://seestorm.example/v1/active-events.json');
+    const res = await worker.fetch(req, fakeEnv());
+    expect(res.status).toBe(200);
+    expect(res.headers.get('strict-transport-security')).toBe(
+      'max-age=31536000; includeSubDomains; preload',
+    );
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+    expect(res.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
+    expect(res.headers.get('permissions-policy')).toBe('geolocation=(), microphone=(), camera=()');
+    const csp = res.headers.get('content-security-policy-report-only');
+    expect(csp).toBeTruthy();
+    // Deliberately Report-Only. The enforcing header MUST NOT appear until
+    // Open Decision #9's flip criteria are met.
+    expect(res.headers.get('content-security-policy')).toBeNull();
+    // Spot-check the allowlist still includes the R2-Protomaps upstream —
+    // if this ever regresses, MapLibre style JSON will be blocked.
+    expect(csp).toContain('https://data.seestorm.org');
+    expect(csp).toContain('report-uri /csp-report');
+  });
+
+  it('applies security headers on 404 responses', async () => {
+    // 404s are still browser-rendered; a phishing overlay could target the
+    // 404 page as easily as the root.
+    const req = new Request('https://seestorm.example/v1/does-not-exist');
+    const res = await worker.fetch(req, fakeEnv());
+    expect(res.status).toBe(404);
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+    expect(res.headers.get('strict-transport-security')).toBeTruthy();
+    expect(res.headers.get('content-security-policy-report-only')).toBeTruthy();
+  });
+
+  it('applies security headers on the static-asset fall-through (HTML)', async () => {
+    // The root HTML is the highest-value CSP target — that's where the
+    // inline script execution a real attacker would exploit lives.
+    const req = new Request('https://seestorm.example/');
+    const res = await worker.fetch(req, fakeEnv());
+    expect(res.headers.get('content-security-policy-report-only')).toBeTruthy();
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+    expect(res.headers.get('content-security-policy')).toBeNull();
+  });
+});
+
+describe('handleCspReport', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns 204 and logs structured fields for a valid legacy csp-report body', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const body = JSON.stringify({
+      'csp-report': {
+        'blocked-uri': 'https://evil.example/x.js',
+        'violated-directive': 'script-src',
+        'source-file': 'https://seestorm.example/',
+        'line-number': 42,
+        'script-sample': 'alert(1)',
+        disposition: 'report',
+      },
+    });
+    const req = new Request('https://seestorm.example/csp-report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/csp-report' },
+      body,
+    });
+    const res = await handleCspReport(req);
+    expect(res.status).toBe(204);
+    // Baseline hardening still applies even on the reporter endpoint.
+    expect(res.headers.get('strict-transport-security')).toBeTruthy();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(warnSpy.mock.calls[0][0] as string);
+    expect(logged.event).toBe('csp_violation');
+    expect(logged.blocked_uri).toBe('https://evil.example/x.js');
+    expect(logged.violated_directive).toBe('script-src');
+    expect(logged.line_number).toBe(42);
+    expect(logged.script_sample).toBe('alert(1)');
+  });
+
+  it('returns 204 and logs for a modern reports+json envelope', async () => {
+    // Reporting API (Chrome) uses a different shape than the legacy CSP
+    // report — the Worker must accept both or it loses half its signal.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const body = JSON.stringify([
+      {
+        type: 'csp-violation',
+        body: {
+          blockedURL: 'https://evil.example/x.js',
+          effectiveDirective: 'script-src-elem',
+          sourceFile: 'https://seestorm.example/',
+          lineNumber: 99,
+          sample: 'doStuff()',
+          disposition: 'report',
+        },
+      },
+    ]);
+    const req = new Request('https://seestorm.example/csp-report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/reports+json' },
+      body,
+    });
+    const res = await handleCspReport(req);
+    expect(res.status).toBe(204);
+    const logged = JSON.parse(warnSpy.mock.calls[0][0] as string);
+    expect(logged.blocked_uri).toBe('https://evil.example/x.js');
+    expect(logged.violated_directive).toBe('script-src-elem');
+    expect(logged.line_number).toBe(99);
+  });
+
+  it('rejects bodies larger than 16 KB with 413', async () => {
+    // Amplification defense: a public unauthenticated POST target is a soft
+    // abuse vector. 16 KB is well above any real report envelope.
+    const huge = 'x'.repeat(16 * 1024 + 1);
+    const req = new Request('https://seestorm.example/csp-report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/csp-report' },
+      body: huge,
+    });
+    const res = await handleCspReport(req);
+    expect(res.status).toBe(413);
+  });
+
+  it('returns 405 for GET (and other non-POST methods)', async () => {
+    const req = new Request('https://seestorm.example/csp-report', { method: 'GET' });
+    const res = await handleCspReport(req);
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('POST');
+  });
+
+  it('returns 204 on malformed JSON without crashing (best-effort logging)', async () => {
+    // Reports are advisory. A hostile or buggy client sending junk must not
+    // crash the Worker — we log the raw sample for forensics and 204.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const req = new Request('https://seestorm.example/csp-report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/csp-report' },
+      body: '{not-json,,',
+    });
+    const res = await handleCspReport(req);
+    expect(res.status).toBe(204);
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(errSpy.mock.calls[0][0] as string);
+    expect(logged.event).toBe('csp_violation_parse_error');
+    expect(logged.raw_sample).toContain('{not-json');
+  });
+
+  it('is wired to the top-level worker.fetch at /csp-report', async () => {
+    // Integration check — the route table must send /csp-report POSTs to
+    // handleCspReport, not fall through to ASSETS.
+    const req = new Request('https://seestorm.example/csp-report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/csp-report' },
+      body: JSON.stringify({ 'csp-report': { 'blocked-uri': 'x' } }),
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await worker.fetch(req, fakeEnv());
+    expect(res.status).toBe(204);
   });
 });

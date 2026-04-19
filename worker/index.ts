@@ -87,16 +87,90 @@ export function parsePerStateCode(pathname: string): string | null {
 const HISTORY_DEFAULT_LIMIT = 240;
 const HISTORY_MAX_LIMIT = 1000;
 
+/**
+ * CSP allowlist for SeeStorm. Shipped **Report-Only** first — see Open
+ * Decision #9 in docs/SWARM_AUDIT_2026-04-18.md. Flip criteria:
+ *   - ≥7 days elapsed in Report-Only AND
+ *   - 48h zero-new-violation-type window observed AND
+ *   - ≤14-day hard ceiling (if hit, tighten allowlist, don't extend window).
+ *
+ * Source: docs/LAUNCH_HARDENING.md:117-137 (runtime recon 2026-04-17).
+ * `report-uri` is same-origin — see handleCspReport() below.
+ */
+const CSP_POLICY = [
+  "default-src 'self'",
+  // Next.js RSC hydration emits inline scripts. Replace with nonce-based
+  // policy via middleware as a follow-up hardening pass.
+  "script-src 'self' 'unsafe-inline'",
+  // Tailwind / component inline styles.
+  "style-src 'self' 'unsafe-inline'",
+  // Inter is self-hosted via next/font.
+  "font-src 'self'",
+  "img-src 'self' data:",
+  // MapLibre geojson-vt spawns a blob: worker for tile parsing.
+  'worker-src blob:',
+  // Upstreams: Iowa Mesonet radar, CartoDB basemap, Stadia dev basemap,
+  // SeeStorm R2-backed Protomaps (subdomain provisioned by Sean — CAA on
+  // seestorm.org limits issuance to LE + GTS), and NWS MVP fallback.
+  "connect-src 'self' https://mesonet.agron.iastate.edu https://basemaps.cartocdn.com https://tiles.stadiamaps.com https://data.seestorm.org https://api.weather.gov",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  'report-uri /csp-report',
+].join('; ');
+
+/**
+ * Apply the baseline security headers to ANY response. These are browser-
+ * interpretation hints that are safe on binary and JSON responses alike.
+ *
+ * HSTS + X-Content-Type-Options + Referrer-Policy + Permissions-Policy apply
+ * universally (they don't trigger content parsing side-effects). X-Frame-
+ * Options is included here too — clickjacking protection is cheap and our
+ * R2-proxied JSON would never be legitimately framed.
+ */
+function applyBaselineSecurityHeaders(headers: Headers): void {
+  // HSTS — preload-eligible (max-age ≥ 1yr, includeSubDomains, preload). One-
+  // time registration at hstspreload.org AFTER verifying subdomains are HTTPS.
+  headers.set('strict-transport-security', 'max-age=31536000; includeSubDomains; preload');
+  headers.set('x-content-type-options', 'nosniff');
+  headers.set('x-frame-options', 'DENY');
+  headers.set('referrer-policy', 'strict-origin-when-cross-origin');
+  headers.set('permissions-policy', 'geolocation=(), microphone=(), camera=()');
+}
+
+/**
+ * Apply CSP in Report-Only to responses where a browser might execute content
+ * (HTML pages, JSON consumed by JS). Deliberately Report-Only — do NOT add
+ * the enforcing `Content-Security-Policy` header here. See CSP_POLICY for
+ * the flip criteria.
+ */
+function applyCspReportOnly(headers: Headers): void {
+  headers.set('content-security-policy-report-only', CSP_POLICY);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    // CSP violation reporter — same-origin POST target declared in the
+    // CSP's report-uri. Handle before `/v1/` so the route stays distinct
+    // from the versioned public API surface.
+    if (url.pathname === '/csp-report') {
+      return handleCspReport(request);
+    }
 
     if (url.pathname.startsWith('/v1/')) {
       return handleApiRequest(request, url, env);
     }
 
-    // Anything not under /v1/ is static Next.js content.
-    return env.ASSETS.fetch(request);
+    // Anything not under /v1/ is static Next.js content. Wrap the ASSETS
+    // response so security headers land on every HTML page (the primary
+    // CSP target), 404 pages, and the root document.
+    const assetResponse = await env.ASSETS.fetch(request);
+    const wrapped = new Response(assetResponse.body, assetResponse);
+    applyBaselineSecurityHeaders(wrapped.headers);
+    applyCspReportOnly(wrapped.headers);
+    return wrapped;
   },
 } satisfies ExportedHandler<Env>;
 
@@ -202,12 +276,13 @@ async function serveHistoryList(request: Request, url: URL, env: Env): Promise<R
     count: snapshots.length,
   });
 
-  return new Response(body, {
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': LIST_CACHE_CONTROL,
-    },
+  const headers = new Headers({
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': LIST_CACHE_CONTROL,
   });
+  applyBaselineSecurityHeaders(headers);
+  applyCspReportOnly(headers);
+  return new Response(body, { headers });
 }
 
 /** Minimum surface of R2Bucket needed for listing — kept narrow for testability. */
@@ -406,12 +481,13 @@ export function serveGeoSuggestion(request: Request): Response {
     lon: Number.isFinite(lon) ? lon : null,
   });
 
-  return new Response(body, {
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': GEO_CACHE_CONTROL,
-    },
+  const headers = new Headers({
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': GEO_CACHE_CONTROL,
   });
+  applyBaselineSecurityHeaders(headers);
+  applyCspReportOnly(headers);
+  return new Response(body, { headers });
 }
 
 function buildObjectHeaders(object: R2Object, cacheControl: string): Headers {
@@ -422,22 +498,210 @@ function buildObjectHeaders(object: R2Object, cacheControl: string): Headers {
   if (!headers.has('content-type')) {
     headers.set('content-type', 'application/json; charset=utf-8');
   }
+  // R2 payloads are JSON consumed by the client's fetch path; a browser
+  // can still evaluate the response text if tricked, so apply the full
+  // header set. CSP stays Report-Only until the flip criteria in
+  // CSP_POLICY's docblock are met.
+  applyBaselineSecurityHeaders(headers);
+  applyCspReportOnly(headers);
   return headers;
 }
 
 function notFound(): Response {
-  return new Response('Not found', {
-    status: 404,
-    headers: { 'content-type': 'text/plain; charset=utf-8' },
-  });
+  const headers = new Headers({ 'content-type': 'text/plain; charset=utf-8' });
+  applyBaselineSecurityHeaders(headers);
+  applyCspReportOnly(headers);
+  return new Response('Not found', { status: 404, headers });
 }
 
-function methodNotAllowed(): Response {
-  return new Response('Method not allowed', {
-    status: 405,
-    headers: {
-      'content-type': 'text/plain; charset=utf-8',
-      allow: 'GET, HEAD',
-    },
+function methodNotAllowed(allow = 'GET, HEAD'): Response {
+  const headers = new Headers({
+    'content-type': 'text/plain; charset=utf-8',
+    allow,
   });
+  applyBaselineSecurityHeaders(headers);
+  applyCspReportOnly(headers);
+  return new Response('Method not allowed', { status: 405, headers });
+}
+
+/**
+ * Maximum accepted body size for a CSP violation report. 16 KB is well above
+ * any realistic report payload (typical reports are sub-2 KB) while keeping
+ * the Worker immune to junk-POST amplification against the `report-uri`. A
+ * hostile client that can't authenticate shouldn't be able to make us do
+ * meaningful work per request.
+ */
+const CSP_REPORT_MAX_BYTES = 16 * 1024;
+
+/**
+ * Structured fields pulled out of a best-effort CSP report parse. All optional
+ * because browsers differ on both envelope shape (`application/csp-report`
+ * legacy vs `application/reports+json` modern) and which sub-fields they
+ * populate. See handleCspReport() for the parse-and-log contract.
+ */
+interface CspReportFields {
+  blocked_uri?: string;
+  violated_directive?: string;
+  source_file?: string;
+  line_number?: number;
+  script_sample?: string;
+  disposition?: string;
+}
+
+/** Max chars retained for `script-sample` to keep log lines bounded. */
+const CSP_SAMPLE_MAX_CHARS = 200;
+
+function truncateSample(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value.length > CSP_SAMPLE_MAX_CHARS ? value.slice(0, CSP_SAMPLE_MAX_CHARS) + '…' : value;
+}
+
+function readString(obj: Record<string, unknown>, key: string): string | undefined {
+  const v = obj[key];
+  return typeof v === 'string' ? v : undefined;
+}
+
+function readNumber(obj: Record<string, unknown>, key: string): number | undefined {
+  const v = obj[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+/**
+ * Extract the reporter-friendly subset of fields from whatever envelope the
+ * browser sent. Legacy shape (`application/csp-report`):
+ *   { "csp-report": { "blocked-uri": ..., "violated-directive": ..., ... } }
+ * Modern Reporting API (`application/reports+json`) is a JSON array:
+ *   [{ "type": "csp-violation", "body": { "blockedURL": ..., ... } }, ...]
+ *
+ * We accept both and return the first recognisable violation. On any
+ * malformed input we return an empty object and let the caller log the raw
+ * text — the contract is "best-effort, never crash".
+ */
+function extractCspFields(parsed: unknown): CspReportFields {
+  // Legacy shape: { "csp-report": {...} }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const legacy = (parsed as Record<string, unknown>)['csp-report'];
+    if (legacy && typeof legacy === 'object') {
+      const r = legacy as Record<string, unknown>;
+      return {
+        blocked_uri: readString(r, 'blocked-uri') ?? readString(r, 'blockedURI'),
+        violated_directive:
+          readString(r, 'violated-directive') ?? readString(r, 'effective-directive'),
+        source_file: readString(r, 'source-file'),
+        line_number: readNumber(r, 'line-number'),
+        script_sample: truncateSample(r['script-sample']),
+        disposition: readString(r, 'disposition'),
+      };
+    }
+  }
+  // Modern Reporting API: array of { type, body }
+  if (Array.isArray(parsed)) {
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== 'object') continue;
+      const body = (entry as Record<string, unknown>).body;
+      if (!body || typeof body !== 'object') continue;
+      const r = body as Record<string, unknown>;
+      return {
+        blocked_uri: readString(r, 'blockedURL') ?? readString(r, 'blocked-uri'),
+        violated_directive:
+          readString(r, 'effectiveDirective') ?? readString(r, 'violatedDirective'),
+        source_file: readString(r, 'sourceFile') ?? readString(r, 'source-file'),
+        line_number: readNumber(r, 'lineNumber'),
+        script_sample: truncateSample(r.sample ?? r['script-sample']),
+        disposition: readString(r, 'disposition'),
+      };
+    }
+  }
+  return {};
+}
+
+/**
+ * POST /csp-report — same-origin collector for CSP (Report-Only) violations.
+ *
+ * Contract:
+ *   - Non-POST → 405 with `allow: POST`.
+ *   - Body > 16 KB → 413 (defense against amplification abuse).
+ *   - Accept both `application/csp-report` (legacy) and
+ *     `application/reports+json` (modern Reporting API) envelopes; parse
+ *     best-effort and log structured fields via console.warn.
+ *   - Malformed JSON still returns 204 — reports are advisory, not critical,
+ *     and crashing the Worker on hostile input would be worse than losing one
+ *     sample. We log the raw (truncated) payload for forensics.
+ *   - No persistence. No external reporting service. Logs land in CF
+ *     workers.dev tail / Logpush and are reviewed manually per Open
+ *     Decision #9's flip criteria.
+ *
+ * Exported for tests.
+ */
+export async function handleCspReport(request: Request): Promise<Response> {
+  if (request.method !== 'POST') {
+    return methodNotAllowed('POST');
+  }
+
+  // Reject oversize bodies up-front when the client advertises their size;
+  // a dishonest Content-Length still gets caught after we read, below.
+  const declaredLen = Number.parseInt(request.headers.get('content-length') ?? '', 10);
+  if (Number.isFinite(declaredLen) && declaredLen > CSP_REPORT_MAX_BYTES) {
+    const headers = new Headers({ 'content-type': 'text/plain; charset=utf-8' });
+    applyBaselineSecurityHeaders(headers);
+    return new Response('Payload too large', { status: 413, headers });
+  }
+
+  let raw: string;
+  try {
+    raw = await request.text();
+  } catch {
+    // Body read failed (client abort, malformed framing). Treat as advisory
+    // loss and respond 204 so we don't block the browser on our bug.
+    const headers = new Headers();
+    applyBaselineSecurityHeaders(headers);
+    return new Response(null, { status: 204, headers });
+  }
+
+  if (raw.length > CSP_REPORT_MAX_BYTES) {
+    const headers = new Headers({ 'content-type': 'text/plain; charset=utf-8' });
+    applyBaselineSecurityHeaders(headers);
+    return new Response('Payload too large', { status: 413, headers });
+  }
+
+  let parsed: unknown;
+  let parseOk = true;
+  try {
+    parsed = raw.length > 0 ? JSON.parse(raw) : undefined;
+  } catch {
+    parseOk = false;
+  }
+
+  const fields = parseOk ? extractCspFields(parsed) : {};
+
+  // Structured log line. console.warn lands in Workers tail output; the
+  // reviewer greps for "csp_violation" to count distinct violation types
+  // per day. Intentionally one line of JSON for easy ingestion.
+  if (parseOk) {
+    console.warn(
+      JSON.stringify({
+        event: 'csp_violation',
+        blocked_uri: fields.blocked_uri,
+        violated_directive: fields.violated_directive,
+        source_file: fields.source_file,
+        line_number: fields.line_number,
+        script_sample: fields.script_sample,
+        disposition: fields.disposition,
+      }),
+    );
+  } else {
+    // Keep the diagnostic — a persistent parse failure could indicate a
+    // browser envelope shape we don't recognise.
+    console.error(
+      JSON.stringify({
+        event: 'csp_violation_parse_error',
+        // Never dump more than the sample cap to keep log cost bounded.
+        raw_sample: truncateSample(raw),
+      }),
+    );
+  }
+
+  const headers = new Headers();
+  applyBaselineSecurityHeaders(headers);
+  return new Response(null, { status: 204, headers });
 }

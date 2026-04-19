@@ -41,6 +41,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# wrangler — local dev state (miniflare caches, tmp bundles) from `wrangler dev`
+.wrangler/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
