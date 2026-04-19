@@ -8,6 +8,18 @@ import {
   type AlertFamily,
   type WeatherAlert,
 } from '@/lib/alerts';
+import { AlertIcon } from '@/lib/alertIcons';
+
+// Family headers summarize a whole bucket of related events — we pick a
+// representative event so the family icon agrees with `iconForEvent` for
+// alerts inside. Map-key match lets substring-matched families (e.g.
+// "Severe Thunderstorm" matching both Warnings and Watches) share a glyph.
+const FAMILY_EVENT_EXEMPLAR: Record<AlertFamily, string> = {
+  Tornado: 'Tornado Warning',
+  'Severe Thunderstorm': 'Severe Thunderstorm Warning',
+  'Flash Flood': 'Flash Flood Warning',
+  Other: 'Special Weather Statement',
+};
 
 // Tornado-family alerts are life-threatening — they should be visible
 // without the user having to click. Everything else starts collapsed so the
@@ -63,6 +75,15 @@ function AlertCard({
           className="inline-block w-2.5 h-2.5 rounded-sm"
           style={{ backgroundColor: color }}
         />
+        {/* Icon inherits the event color via `currentColor` so the glyph
+            reads in the same hue as the title — reinforces the shape/color
+            pairing for colorblind scanning without a second style override. */}
+        <AlertIcon
+          event={alert.properties.event}
+          data-testid={`alert-card-icon-${alert.properties.event}`}
+          className="shrink-0"
+          style={{ color }}
+        />
         <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color }}>
           {alert.properties.event}
         </span>
@@ -101,6 +122,10 @@ function FamilySection({
   now: number;
 }) {
   const color = colorForEvent(alerts[0]?.properties.event ?? '');
+  // The family header icon represents the whole bucket; we key off an
+  // exemplar event rather than `alerts[0]` so an empty-family render (shouldn't
+  // happen in practice, but defensive) still lands on the right glyph.
+  const familyExemplar = FAMILY_EVENT_EXEMPLAR[family];
   return (
     <details
       className="bg-gray-900/80 rounded-md border border-gray-700"
@@ -111,6 +136,12 @@ function FamilySection({
           aria-hidden="true"
           className="inline-block w-1 h-4 rounded-sm"
           style={{ backgroundColor: color }}
+        />
+        <AlertIcon
+          event={familyExemplar}
+          data-testid={`alerts-family-icon-${family}`}
+          className="shrink-0"
+          style={{ color }}
         />
         <span>{family}</span>
         <span className="ml-auto text-xs text-gray-400">

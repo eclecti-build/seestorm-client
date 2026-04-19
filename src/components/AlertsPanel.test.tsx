@@ -186,6 +186,45 @@ describe('<AlertsPanel />', () => {
     ).not.toBeInTheDocument();
   });
 
+  // Icon-presence regression (2026-04-19): alert cards and family headers
+  // should carry event-type icons. Asserting by data-testid keeps the test
+  // resilient to SVG-shape changes — we care that the icon is THERE and
+  // labeled with the right event, not what strokes it draws.
+  describe('event-type icons', () => {
+    it('renders an icon on every alert card', () => {
+      const alerts: WeatherAlert[] = [
+        build({ nws_id: 'TO', event_type: 'Tornado Warning' }),
+        build({ nws_id: 'STW', event_type: 'Severe Thunderstorm Warning' }),
+        build({ nws_id: 'FF', event_type: 'Flash Flood Warning' }),
+      ];
+      // Need to force-open every family to see their cards (defaults only
+      // open Tornado). Easiest: render, click each summary to open.
+      const { container } = render(
+        <AlertsPanel alerts={alerts} onSelect={() => {}} now={FIXED_NOW} />,
+      );
+      container.querySelectorAll('details').forEach((d) => d.setAttribute('open', ''));
+
+      expect(screen.getByTestId('alert-card-icon-Tornado Warning')).toBeInTheDocument();
+      expect(screen.getByTestId('alert-card-icon-Severe Thunderstorm Warning')).toBeInTheDocument();
+      expect(screen.getByTestId('alert-card-icon-Flash Flood Warning')).toBeInTheDocument();
+    });
+
+    it('renders an icon on every family header', () => {
+      const alerts: WeatherAlert[] = [
+        build({ nws_id: 'TO', event_type: 'Tornado Warning' }),
+        build({ nws_id: 'STW', event_type: 'Severe Thunderstorm Warning' }),
+        build({ nws_id: 'FF', event_type: 'Flash Flood Warning' }),
+        build({ nws_id: 'SWS', event_type: 'Special Weather Statement' }),
+      ];
+      render(<AlertsPanel alerts={alerts} onSelect={() => {}} now={FIXED_NOW} />);
+
+      expect(screen.getByTestId('alerts-family-icon-Tornado')).toBeInTheDocument();
+      expect(screen.getByTestId('alerts-family-icon-Severe Thunderstorm')).toBeInTheDocument();
+      expect(screen.getByTestId('alerts-family-icon-Flash Flood')).toBeInTheDocument();
+      expect(screen.getByTestId('alerts-family-icon-Other')).toBeInTheDocument();
+    });
+  });
+
   // Width-toggle regression (codex 2026-04-18): the panel must hug its text
   // when collapsed and only expand to a fixed width when opened. Without
   // this guarantee the mobile viewport fix silently regresses — the old
