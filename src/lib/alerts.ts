@@ -146,6 +146,14 @@ export interface IngestAlert {
  */
 export interface IngestSnapshot {
   generated_at: string;
+  /**
+   * Epoch-ms copy of `generated_at`, populated by ingest ≥ 44caae5
+   * (swarm audit 2026-04-18, Tier 1 #2b). Used for clock-skew calibration
+   * and the staleness banner without re-parsing the ISO string on every
+   * poll. Optional because older snapshots (pre-44caae5) and history
+   * fixtures may not include it — consumers should fall back gracefully.
+   */
+  generated_at_ms?: number;
   areas: string[];
   alert_count: number;
   alerts: IngestAlert[];
@@ -194,8 +202,19 @@ export function parseIngestSnapshot(raw: unknown): IngestSnapshot {
   }
   const alerts = obj.alerts as IngestAlert[];
 
+  // generated_at_ms is additive — ingest ≥ 44caae5 ships it, older payloads
+  // don't. Accept only finite positive numbers; fall through to `undefined`
+  // otherwise so downstream consumers (clock-offset hook, StalenessBanner)
+  // can detect absence and degrade cleanly instead of crunching NaN.
+  const genMsRaw = obj.generated_at_ms;
+  const generatedAtMs =
+    typeof genMsRaw === 'number' && Number.isFinite(genMsRaw) && genMsRaw > 0
+      ? genMsRaw
+      : undefined;
+
   return {
     generated_at: obj.generated_at,
+    generated_at_ms: generatedAtMs,
     areas,
     alert_count: typeof obj.alert_count === 'number' ? obj.alert_count : alerts.length,
     alerts,
