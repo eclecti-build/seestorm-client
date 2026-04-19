@@ -116,19 +116,21 @@ const CSP_POLICY = [
   "default-src 'self'",
   // Next.js RSC hydration emits inline scripts. Replace with nonce-based
   // policy via middleware as a follow-up hardening pass.
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
   // Tailwind / component inline styles.
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   // Inter is self-hosted via next/font; Google Fonts pulled in by next/font/google.
   "font-src 'self' https://fonts.gstatic.com",
-  "img-src 'self' data: https://*.basemaps.cartocdn.com https://mesonet.agron.iastate.edu https://tiles.stadiamaps.com https://data.seestorm.org",
+  "img-src 'self' data: https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://mesonet.agron.iastate.edu https://tiles.stadiamaps.com https://data.seestorm.org",
   // MapLibre geojson-vt spawns a blob: worker for tile parsing.
   'worker-src blob:',
-  // Upstreams: Iowa Mesonet radar, CartoDB basemap (wildcard covers
-  // tiles-{a..d}.basemaps.cartocdn.com shard rotations), Stadia dev
-  // basemap, SeeStorm R2-backed Protomaps (subdomain provisioned by Sean —
-  // CAA on seestorm.org limits issuance to LE + GTS), and NWS MVP fallback.
-  "connect-src 'self' https://mesonet.agron.iastate.edu https://*.basemaps.cartocdn.com https://tiles.stadiamaps.com https://data.seestorm.org https://api.weather.gov",
+  // Upstreams: Iowa Mesonet radar, CartoDB basemap (bare host serves
+  // style.json; wildcard covers tiles-{a..d}.basemaps.cartocdn.com shard
+  // rotations — CSP wildcards do NOT match the apex, so both are required),
+  // Stadia dev basemap, SeeStorm R2-backed Protomaps (subdomain provisioned
+  // by Sean — CAA on seestorm.org limits issuance to LE + GTS), NWS MVP
+  // fallback, and Cloudflare Web Analytics beacon auto-injected by Workers.
+  "connect-src 'self' https://mesonet.agron.iastate.edu https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://tiles.stadiamaps.com https://data.seestorm.org https://api.weather.gov https://cloudflareinsights.com",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
