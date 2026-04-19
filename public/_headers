@@ -1,0 +1,8 @@
+/geo/*
+  Cache-Control: public, max-age=2592000, immutable
+
+/data/*
+  Cache-Control: public, max-age=2592000, immutable
+
+/*.html
+  Cache-Control: public, max-age=60
