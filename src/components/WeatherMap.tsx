@@ -55,7 +55,7 @@ const USER_LOCATION_ZOOM = 8;
 // through the basemap at the 8-state default extent), lighter when zoomed in
 // (so county / city lines stay legible at the local view). The zoom-8 value
 // of 0.28 preserves the previously tuned county-zoom look exactly; the
-// zoom-5 bump to 0.6 and zoom-12 fade to 0.15 extend the ramp outward.
+// zoom-5 bump to 0.75 and zoom-12 fade to 0.15 extend the ramp outward.
 //
 // Narrow cast: MapLibre's `ExpressionSpecification` is a recursive tuple union
 // that TS won't unify with the inferred readonly-tuple literal here. Declaring
@@ -67,7 +67,7 @@ const RADAR_OPACITY_EXPR: ExpressionSpecification = [
   ['linear'],
   ['zoom'],
   5,
-  0.6,
+  0.75,
   8,
   0.28,
   12,
@@ -1074,7 +1074,20 @@ export default function WeatherMap() {
           // brighter state lines above, but punches through radar + fills.
           'line-color': '#d1d5db',
           'line-width': 1.4,
-          'line-opacity': 0.85,
+          // Fade county lines at regional zoom so the radar can dominate the
+          // wide view and the 8-state mesh doesn't feel cluttered. Restored
+          // to the previous 0.85 by zoom 8 — the county-zoom look is preserved.
+          'line-opacity': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            5,
+            0.3,
+            8,
+            0.85,
+            12,
+            0.85,
+          ] as unknown as ExpressionSpecification,
         },
       });
       // User-county highlight — subtle but distinctly different border on
