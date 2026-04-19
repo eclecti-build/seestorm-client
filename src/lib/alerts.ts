@@ -25,6 +25,17 @@ export const WARNING_COLORS: Record<string, string> = {
   'Flash Flood Warning': '#8B0000',
   'Flash Flood Watch': '#2E8B57',
   'Special Weather Statement': '#FFE4B5',
+  // Cold-air products. Inspired by the NWS public hazards palette but nudged
+  // toward cool blues/purples so they read as "cold" next to the warm severe
+  // palette above. Ordering here is display-only (legend iterates this map in
+  // insertion order) — priority and tier are handled separately.
+  'Hard Freeze Warning': '#9400D3',
+  'Freeze Warning': '#483D8B',
+  'Hard Freeze Watch': '#4B0082',
+  // NWS maps cite #00FFFF for Freeze Watch; reads too neon on our basemap, so
+  // we soften to cadet blue. Distinction from Frost Advisory is still clear.
+  'Freeze Watch': '#5F9EA0',
+  'Frost Advisory': '#6495ED',
 };
 
 export const FALLBACK_COLOR = '#888888';
@@ -37,6 +48,14 @@ export const WARNING_PRIORITY: Record<string, number> = {
   'Severe Thunderstorm Watch': 4,
   'Flash Flood Watch': 5,
   'Special Weather Statement': 6,
+  // Cold-air products rank below SPS — non-life-threatening, slow-onset.
+  // Within the freeze family we still preserve Warning > Watch > Advisory
+  // so a Hard Freeze Warning sorts above a Frost Advisory.
+  'Hard Freeze Warning': 7,
+  'Freeze Warning': 8,
+  'Hard Freeze Watch': 9,
+  'Freeze Watch': 10,
+  'Frost Advisory': 11,
 };
 
 export function colorForEvent(event: string): string {

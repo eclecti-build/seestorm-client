@@ -77,6 +77,19 @@ export const InfoIcon: ComponentType<AlertIconProps> = (props) => (
   </svg>
 );
 
+// Freeze / Frost: a minimal 6-point snowflake built from three crossing lines.
+// Echoes the "three primitives" cadence of TornadoIcon and FloodIcon and reads
+// as "cold" without the cartoon snowflake shorthand (dots, serifs, twelve
+// arms). Kept stroke-only so it inherits the event's color the same way the
+// others do.
+export const FreezeIcon: ComponentType<AlertIconProps> = (props) => (
+  <svg {...BASE_PROPS} {...props}>
+    <path d="M7 2 L7 12" />
+    <path d="M2.7 4.5 L11.3 9.5" />
+    <path d="M2.7 9.5 L11.3 4.5" />
+  </svg>
+);
+
 // Fallback: a neutral diamond. "Something's here, we just don't have a
 // dedicated glyph for it yet." Better than crashing the row or falling back
 // to a tier glyph that would duplicate the swatch.
@@ -101,6 +114,10 @@ export function iconForEvent(event: string): ComponentType<AlertIconProps> {
   // Advisory, Flood Watch) is the slower-moving cousin. Both land on the same
   // water-line glyph because the visual cue — "this is water" — is identical.
   if (event.includes('Flood')) return FloodIcon;
+  // Freeze / Frost / Hard Freeze all share the snowflake. Substring match so
+  // "Hard Freeze Warning" and future cousins ("Freezing Fog Advisory"?) land
+  // here without bespoke rows.
+  if (event.includes('Freeze') || event.includes('Frost')) return FreezeIcon;
   if (event.includes('Special Weather Statement')) return InfoIcon;
   return GenericAlertIcon;
 }
@@ -122,6 +139,7 @@ export function AlertIcon({ event, ...props }: AlertIconProps & { event: string 
   if (event.includes('Tornado')) return <TornadoIcon {...props} />;
   if (event.includes('Thunderstorm')) return <ThunderstormIcon {...props} />;
   if (event.includes('Flood')) return <FloodIcon {...props} />;
+  if (event.includes('Freeze') || event.includes('Frost')) return <FreezeIcon {...props} />;
   if (event.includes('Special Weather Statement')) return <InfoIcon {...props} />;
   return <GenericAlertIcon {...props} />;
 }
