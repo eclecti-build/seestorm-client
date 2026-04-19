@@ -237,6 +237,14 @@ export interface WeatherAlertProperties {
   areaDesc: string;
   url: string | null;
   nwsId: string | null;
+  /**
+   * Full set of USPS 2-letter state codes the underlying ingest record
+   * marked this alert as touching. Optional/additive — legacy v1 snapshots
+   * and alerts that ingest couldn't tag will omit it. Used by the UI to
+   * badge multi-state NWS products (Freeze Warnings, river Floods, etc.)
+   * so users understand cross-border scope.
+   */
+  states?: string[];
 }
 
 export interface WeatherAlert {
@@ -269,9 +277,50 @@ export function ingestToWeatherAlert(a: IngestAlert): WeatherAlert {
       areaDesc: a.area_desc,
       url: resolveAlertUrl({ url: a.url, nws_id: a.nws_id }),
       nwsId: a.nws_id || null,
+      // Pass the full state set through to the view layer so the side panel
+      // can badge multi-state products. Copied defensively to keep the view
+      // shape independent of the ingest object's reference.
+      states: Array.isArray(a.states) ? [...a.states] : undefined,
     },
     geometry: a.geometry,
   };
+}
+
+/**
+ * Display-only helper for multi-state NWS products. When `areaDesc` contains
+ * at least one entry with a `, XX` state suffix, keep only the entries whose
+ * suffix matches `userState` and return `wasFiltered: true`. When no entries
+ * carry a state suffix (bare county names), return the input unchanged — we
+ * can't safely infer state without a zone→state map.
+ *
+ * The filter is purely cosmetic: `alertTouchesState` still decides whether
+ * an alert is shown at all. This just trims the rendered county list so a
+ * user in Indiana doesn't see a Freeze Warning listing Michigan counties.
+ */
+export function filterAreaDescByState(
+  areaDesc: string,
+  userState: string,
+): { filtered: string; wasFiltered: boolean } {
+  if (!userState) return { filtered: areaDesc, wasFiltered: false };
+
+  const parts = areaDesc.split(';').map((p) => p.trim());
+  const suffixRe = /, ([A-Z]{2})$/;
+  const anyHasSuffix = parts.some((p) => suffixRe.test(p));
+  if (!anyHasSuffix) return { filtered: areaDesc, wasFiltered: false };
+
+  const target = userState.toUpperCase();
+  const kept = parts.filter((p) => {
+    const m = p.match(suffixRe);
+    return m !== null && m[1].toUpperCase() === target;
+  });
+
+  // Defensive: if filtering yielded nothing (user state didn't match any
+  // suffix in the listing — shouldn't happen when the alert already passed
+  // `alertTouchesState`, but guard so we never render an empty label), fall
+  // back to the original string.
+  if (kept.length === 0) return { filtered: areaDesc, wasFiltered: false };
+
+  return { filtered: kept.join('; '), wasFiltered: true };
 }
 
 function byPriority(a: WeatherAlert, b: WeatherAlert): number {

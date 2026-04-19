@@ -8,6 +8,7 @@ import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '
 import { buildMotionFeatures, setMotionVisibility } from '@/lib/stormMotion';
 import {
   buildAlertViews,
+  filterAreaDescByState,
   parseIngestSnapshot,
   WARNING_COLORS,
   colorForEvent,
@@ -1360,6 +1361,7 @@ export default function WeatherMap() {
           onSelect={focusAlert}
           selectedId={selectedAlert?.properties.nwsId ?? null}
           now={now}
+          userState={userState ?? undefined}
         />
 
         {/* ZIP-based personalization chip. Collapsible legend-style bubble;
@@ -1405,33 +1407,57 @@ export default function WeatherMap() {
       )}
 
       {/* Selected alert detail panel */}
-      {selectedAlert && (
-        <div className="absolute top-[calc(1rem+env(safe-area-inset-top))] right-[calc(4rem+env(safe-area-inset-right))] max-w-sm bg-gray-900/95 text-white rounded-lg shadow-xl p-4 border border-gray-700">
-          <button
-            onClick={() => setSelectedAlert(null)}
-            className="absolute top-2 right-2 text-gray-400 hover:text-white"
-            aria-label="Close alert details"
-          >
-            ✕
-          </button>
-          <div
-            className="text-xs font-bold uppercase tracking-wide mb-1"
-            style={{
-              color: colorForEvent(selectedAlert.properties.event),
-            }}
-          >
-            {selectedAlert.properties.event}
-          </div>
-          <div className="text-sm font-semibold mb-2">{selectedAlert.properties.headline}</div>
-          <div className="text-xs text-gray-300 mb-2">{selectedAlert.properties.areaDesc}</div>
-          <div className="text-xs text-gray-400 max-h-40 overflow-y-auto">
-            {selectedAlert.properties.description}
-          </div>
-          <div className="text-xs text-gray-500 mt-2">
-            Expires: {new Date(selectedAlert.properties.expires).toLocaleString()}
-          </div>
-        </div>
-      )}
+      {selectedAlert &&
+        (() => {
+          // Mirror the AlertsPanel card: display-only filter of cross-state
+          // counties, plus a badge when the alert spans more than one state.
+          const selectedAreaDesc = userState
+            ? filterAreaDescByState(selectedAlert.properties.areaDesc, userState).filtered
+            : selectedAlert.properties.areaDesc;
+          const selectedStates = selectedAlert.properties.states;
+          const selectedIsMultiState = Array.isArray(selectedStates) && selectedStates.length > 1;
+          let selectedRegionalLabel: string | null = null;
+          if (selectedIsMultiState && selectedStates) {
+            if (userState) {
+              const others = selectedStates.length - 1;
+              selectedRegionalLabel = `Regional — covers ${userState.toUpperCase()} + ${others} other ${
+                others === 1 ? 'state' : 'states'
+              }`;
+            } else {
+              selectedRegionalLabel = `Regional — covers ${selectedStates.length} states`;
+            }
+          }
+          return (
+            <div className="absolute top-[calc(1rem+env(safe-area-inset-top))] right-[calc(4rem+env(safe-area-inset-right))] max-w-sm bg-gray-900/95 text-white rounded-lg shadow-xl p-4 border border-gray-700">
+              <button
+                onClick={() => setSelectedAlert(null)}
+                className="absolute top-2 right-2 text-gray-400 hover:text-white"
+                aria-label="Close alert details"
+              >
+                ✕
+              </button>
+              <div
+                className="text-xs font-bold uppercase tracking-wide mb-1"
+                style={{
+                  color: colorForEvent(selectedAlert.properties.event),
+                }}
+              >
+                {selectedAlert.properties.event}
+              </div>
+              <div className="text-sm font-semibold mb-2">{selectedAlert.properties.headline}</div>
+              <div className="text-xs text-gray-300 mb-2">{selectedAreaDesc}</div>
+              {selectedRegionalLabel && (
+                <div className="text-[10px] text-gray-400 mb-2">{selectedRegionalLabel}</div>
+              )}
+              <div className="text-xs text-gray-400 max-h-40 overflow-y-auto">
+                {selectedAlert.properties.description}
+              </div>
+              <div className="text-xs text-gray-500 mt-2">
+                Expires: {new Date(selectedAlert.properties.expires).toLocaleString()}
+              </div>
+            </div>
+          );
+        })()}
 
       {/* Time slider + status bar */}
       <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/60 to-transparent p-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))] pointer-events-none">
