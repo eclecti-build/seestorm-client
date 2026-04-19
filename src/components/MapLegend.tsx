@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { WARNING_COLORS, tierForEvent, type AlertTier } from '@/lib/alerts';
+import { AlertIcon } from '@/lib/alertIcons';
 
 // Tier glyphs communicate the polygon treatment on the map at a glance.
 // Keep them tiny — they sit next to a 14×14 color swatch inside a cramped
@@ -71,10 +72,27 @@ function MotionGlyph() {
 // keeps showing them so situational awareness isn't lost). Kept to three
 // tiers — tier-level granularity declutters fast without ballooning the
 // UI into a checkbox soup of individual event types.
+//
+// Tier swatch colors are *derived* from the canonical event in each tier
+// inside `WARNING_COLORS` — this is the single source of truth. Previously
+// the hex literals were duplicated here and drifted independently when the
+// palette moved; now a palette change in one place propagates automatically.
 const TIER_DESCRIPTIONS: ReadonlyArray<{ tier: AlertTier; color: string; label: string }> = [
-  { tier: 'Warning', color: '#FF0000', label: 'Warning — take action' },
-  { tier: 'Watch', color: '#FFFF00', label: 'Watch — be aware' },
-  { tier: 'Advisory', color: '#FFE4B5', label: 'Advisory — monitor' },
+  {
+    tier: 'Warning',
+    color: WARNING_COLORS['Tornado Warning'],
+    label: 'Warning — take action',
+  },
+  {
+    tier: 'Watch',
+    color: WARNING_COLORS['Tornado Watch'],
+    label: 'Watch — be aware',
+  },
+  {
+    tier: 'Advisory',
+    color: WARNING_COLORS['Special Weather Statement'],
+    label: 'Advisory — monitor',
+  },
 ];
 
 export interface MapLegendProps {
@@ -156,6 +174,16 @@ export default function MapLegend({
                       aria-hidden="true"
                       className="inline-block w-3 h-3 rounded-sm border border-white/20"
                       style={{ backgroundColor: color }}
+                    />
+                    {/* Event-type glyph rides on `currentColor`, so it picks
+                        up the row's text color automatically — no prop
+                        plumbing for hover / disabled / line-through. Sits
+                        between the color swatch and the label so colorblind
+                        scanning lines up left-to-right: shape → color → name. */}
+                    <AlertIcon
+                      event={event}
+                      data-testid={`map-legend-icon-${event}`}
+                      className="shrink-0 text-gray-100"
                     />
                     <span
                       className={`flex-1 text-left text-gray-100 ${
