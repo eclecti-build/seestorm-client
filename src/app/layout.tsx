@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
+import StalenessBanner from '@/components/StalenessBanner';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -47,7 +48,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body className="antialiased bg-gray-950">{children}</body>
+      <body className="antialiased bg-gray-950">
+        {/* Binary staleness indicator — red banner when server-time delta
+            exceeds STALENESS_CRITICAL_MS. Mounted here so it covers every
+            route (map, about, etc). Renders nothing when FRESH; there is
+            intentionally no middle tier (Open Decisions #11). */}
+        <StalenessBanner />
+        {children}
+      </body>
     </html>
   );
 }

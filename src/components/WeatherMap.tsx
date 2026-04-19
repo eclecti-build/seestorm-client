@@ -23,6 +23,10 @@ import { getUserLocation, USER_LOCATION_KEY } from '@/lib/userLocation';
 import { applyGeoDefaultIfNeeded } from '@/lib/geoDefault';
 import { STATE_VIEW_ZOOM } from '@/lib/coverage';
 import { uspsToFips } from '@/lib/stateFips';
+import { POLL_INTERVAL_MS } from '@/lib/constants';
+import { fetchJsonWithRetry, isAbortError } from '@/lib/fetchWithRetry';
+import { useClockOffset } from '@/lib/useClockOffset';
+import { publishSnapshot } from '@/lib/snapshotStore';
 import AlertsPanel from './AlertsPanel';
 import LocationChip from './LocationChip';
 import MapLegend from './MapLegend';
@@ -176,7 +180,16 @@ export default function WeatherMap() {
   // `now` is a ticking reference time used only for rendering "Xm ago" labels.
   // Kept in state (not read directly via Date.now() in render) so React 19's
   // purity lint stays happy and re-renders only fire at the cadence we choose.
+  // Calibrated via `useClockOffset` below so users with a skewed laptop clock
+  // see correct relative-time labels against `generated_at_ms` from ingest.
   const [now, setNow] = useState<number>(() => Date.now());
+
+  // Clock-offset hook — every successful fetch below records the server's
+  // `generated_at_ms` so `serverNow()` returns a calibrated "now". Consumers
+  // that would otherwise call `Date.now()` for relative-time math should use
+  // `serverNow()` instead (see `historicalLabel` below, and the AlertsPanel
+  // `now` prop). Old payloads without `generated_at_ms` fall back to offset=0.
+  const { serverNow, recordServerTime } = useClockOffset();
 
   // Slider range is: 0 .. history.length-1 (historical)
   //                  history.length (live)
@@ -454,45 +467,68 @@ export default function WeatherMap() {
     };
   }, [mapReady]);
 
-  // Fetch the live snapshot (/v1/active-events.json) — used when sliderValue is live.
-  const fetchLive = useCallback(async () => {
-    try {
-      const response = await fetch('/v1/active-events.json');
-      if (!response.ok) return;
-      const raw: unknown = await response.json();
-      const snapshot = parseIngestSnapshot(raw);
-      const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
-        countyLookup: countyLookupRef.current ?? undefined,
-        userState: userStateRef.current ?? undefined,
-        userPoint: userPointRef.current ?? undefined,
-      });
-      // Defer the heavy state apply off the click thread. `source.setData()`
-      // with the full GeoJSON blob is what pinned production INP at 2,104 ms
-      // on the LIVE pill (swarm audit 2026-04-18, Tier 1 #1). React 19's
-      // startTransition lets the click handler return immediately and lets
-      // MapLibre parse/diff polygons on a lower-priority render pass.
-      startTransition(() => {
-        setAllAlerts(listAlerts);
-        setSnapshotTime(new Date(snapshot.generated_at));
-        renderFeatures(mapFeatures);
-        // Use the filtered set so storm-motion arrows respect the same
-        // userState scoping as the polygons/list. Otherwise users with a saved
-        // ZIP see arrows from the other 7 states leaking through.
-        renderMotion(motionAlerts);
-      });
-    } catch (err) {
-      console.error('Failed to fetch live snapshot:', err);
-    }
-  }, [renderFeatures, renderMotion]);
-
-  // Fetch one historical snapshot by timestamp key.
-  const fetchHistorical = useCallback(
-    async (ts: string) => {
+  // Fetch the live snapshot (/v1/active-events.json) — used when sliderValue
+  // is live. Wrapped in an AbortController so the caller (effect cleanup,
+  // unmount, live→historical state transition) can cancel an in-flight
+  // fetch; retried with exponential backoff on transient failure per
+  // FETCH_RETRY_DELAYS_MS. See swarm audit 2026-04-18, Tier 1 #2c.
+  const fetchLive = useCallback(
+    async (signal?: AbortSignal) => {
       try {
-        const response = await fetch(`/v1/history/${ts}`);
-        if (!response.ok) return;
-        const raw: unknown = await response.json();
+        const raw = await fetchJsonWithRetry('/v1/active-events.json', { signal });
         const snapshot = parseIngestSnapshot(raw);
+        // Calibrate clock offset against the server's generation timestamp,
+        // and publish into the global store so the root-layout StalenessBanner
+        // can render without threading props through the dynamic map import.
+        recordServerTime(snapshot.generated_at_ms);
+        publishSnapshot(snapshot.generated_at_ms ?? null);
+        const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
+          countyLookup: countyLookupRef.current ?? undefined,
+          userState: userStateRef.current ?? undefined,
+          userPoint: userPointRef.current ?? undefined,
+        });
+        // Defer the heavy state apply off the click thread. `source.setData()`
+        // with the full GeoJSON blob is what pinned production INP at 2,104 ms
+        // on the LIVE pill (swarm audit 2026-04-18, Tier 1 #1). React 19's
+        // startTransition lets the click handler return immediately and lets
+        // MapLibre parse/diff polygons on a lower-priority render pass.
+        startTransition(() => {
+          setAllAlerts(listAlerts);
+          setSnapshotTime(new Date(snapshot.generated_at));
+          renderFeatures(mapFeatures);
+          // Use the filtered set so storm-motion arrows respect the same
+          // userState scoping as the polygons/list. Otherwise users with a saved
+          // ZIP see arrows from the other 7 states leaking through.
+          renderMotion(motionAlerts);
+        });
+      } catch (err) {
+        // Aborts are intentional (unmount / state transition). Swallow them
+        // silently — surfacing "live fetch failed" after the user navigated
+        // away would be misleading. Real failures (retry exhausted) still log.
+        if (isAbortError(err)) return;
+        console.error('Failed to fetch live snapshot:', err);
+      }
+    },
+    [renderFeatures, renderMotion, recordServerTime],
+  );
+
+  // Fetch one historical snapshot by timestamp key. Same abort/retry discipline
+  // as `fetchLive` — scrubbing the slider rapidly must cancel the previous
+  // fetch so we don't race payloads into render out-of-order.
+  const fetchHistorical = useCallback(
+    async (ts: string, signal?: AbortSignal) => {
+      try {
+        const raw = await fetchJsonWithRetry(`/v1/history/${ts}`, { signal });
+        const snapshot = parseIngestSnapshot(raw);
+        // Even historical fetches calibrate the clock — they carry the same
+        // generated_at_ms field and give us a fresh sample when the live
+        // poll happens to be on a slow cycle.
+        recordServerTime(snapshot.generated_at_ms);
+        // Historical snapshots are by definition old; publishing their
+        // generated_at_ms into the staleness store would trip the banner.
+        // The banner is a LIVE-data honesty signal — historical scrubbing
+        // doesn't change what the server's latest snapshot looks like, so
+        // we leave the store alone here.
         const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
@@ -508,10 +544,11 @@ export default function WeatherMap() {
           renderMotion(motionAlerts);
         });
       } catch (err) {
+        if (isAbortError(err)) return;
         console.error('Failed to fetch historical snapshot:', err);
       }
     },
-    [renderFeatures, renderMotion],
+    [renderFeatures, renderMotion, recordServerTime],
   );
 
   // Keep `refreshCurrentFrameRef` pointed at a closure that re-fetches the
@@ -531,47 +568,89 @@ export default function WeatherMap() {
   }, [isLive, sliderValue, history, fetchLive, fetchHistorical]);
 
   // Fetch the history index from the Worker.
-  const fetchHistory = useCallback(async () => {
-    try {
-      const response = await fetch('/v1/history?limit=60');
-      if (!response.ok) return;
-      const data: HistoryResponse = await response.json();
-      // API returns newest-first; reverse so index 0 is oldest, len-1 is newest.
-      const ordered = data.snapshots.slice().reverse();
-      setHistory((prev) => {
-        // If the slider was on "live" (== prev.length), keep it on "live" after the list grows.
-        if (sliderValue === prev.length) {
-          setSliderValue(ordered.length);
-        }
-        return ordered;
-      });
-    } catch (err) {
-      console.error('Failed to fetch history index:', err);
-    }
-  }, [sliderValue]);
+  const fetchHistory = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const raw = await fetchJsonWithRetry('/v1/history?limit=60', { signal });
+        const data = raw as HistoryResponse;
+        // API returns newest-first; reverse so index 0 is oldest, len-1 is newest.
+        const ordered = data.snapshots.slice().reverse();
+        setHistory((prev) => {
+          // If the slider was on "live" (== prev.length), keep it on "live" after the list grows.
+          if (sliderValue === prev.length) {
+            setSliderValue(ordered.length);
+          }
+          return ordered;
+        });
+      } catch (err) {
+        if (isAbortError(err)) return;
+        console.error('Failed to fetch history index:', err);
+      }
+    },
+    [sliderValue],
+  );
 
-  // When in live mode, poll live + refresh history list every 30s.
+  // When in live mode, poll live + refresh history list every POLL_INTERVAL_MS.
+  // All in-flight fetches are owned by a single AbortController per effect run
+  // so the cleanup aborts them on unmount AND on the live→historical state
+  // transition (swarm audit 2026-04-18, Tier 1 #2c). A visibilitychange and a
+  // focus listener both fire an immediate refetch — background-tab throttling
+  // would otherwise let the 30s setInterval drift well past the 90s staleness
+  // threshold while the user's tab is hidden.
+  //
   // fetchLive/fetchHistory are async — setState happens after `await`, not
   // synchronously in this effect body — so react-hooks/set-state-in-effect
   // is a false positive here.
   useEffect(() => {
     if (!mapReady || !isLive) return;
-    void fetchLive();
+    const controller = new AbortController();
+    const { signal } = controller;
 
+    void fetchLive(signal);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; setState post-await
-    void fetchHistory();
+    void fetchHistory(signal);
+
     const interval = setInterval(() => {
-      void fetchLive();
-      void fetchHistory();
-    }, 30_000);
-    return () => clearInterval(interval);
+      void fetchLive(signal);
+      void fetchHistory(signal);
+    }, POLL_INTERVAL_MS);
+
+    // Browsers throttle setInterval in hidden tabs — without these listeners
+    // a user returning to SeeStorm after a coffee would see a minutes-old
+    // snapshot until the next tick. Refetch immediately when either signal
+    // fires; dedupe is unnecessary because AbortController cancels the stale
+    // in-flight request on the next state change.
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === 'visible') {
+        void fetchLive(signal);
+        void fetchHistory(signal);
+      }
+    };
+    const onFocus = (): void => {
+      void fetchLive(signal);
+      void fetchHistory(signal);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onFocus);
+      controller.abort();
+    };
   }, [mapReady, isLive, fetchLive, fetchHistory]);
 
-  // When scrubbed to historical, fetch that snapshot. Same async-setState pattern.
+  // When scrubbed to historical, fetch that snapshot. Same async-setState
+  // pattern. AbortController cleanup cancels the previous historical fetch
+  // when the user drags the slider rapidly.
   useEffect(() => {
     if (!mapReady || isLive) return;
     const entry = history[sliderValue];
-    if (entry) void fetchHistorical(entry.ts);
+    if (!entry) return;
+    const controller = new AbortController();
+    void fetchHistorical(entry.ts, controller.signal);
+    return () => controller.abort();
   }, [mapReady, isLive, sliderValue, history, fetchHistorical]);
 
   // Auto-advance the slider when playing. 500ms per frame at 1x — fast enough
@@ -1192,10 +1271,13 @@ export default function WeatherMap() {
   }, []);
 
   // Tick `now` every 30s so the "Xm ago" label advances without a full re-fetch.
+  // Reads `serverNow()` instead of `Date.now()` so a clock-skewed user sees
+  // labels anchored to the server's authoritative time (swarm audit 2026-04-18,
+  // Cross-cutting — Time / timezone handling).
   useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    const interval = setInterval(() => setNow(serverNow()), 30_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [serverNow]);
 
   // Label describing what the user is currently viewing. Pure in `now` — the
   // component's ticking state — so React 19's purity lint is satisfied.
