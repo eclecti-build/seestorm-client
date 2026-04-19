@@ -481,7 +481,7 @@ export default function WeatherMap() {
         // and publish into the global store so the root-layout StalenessBanner
         // can render without threading props through the dynamic map import.
         recordServerTime(snapshot.generated_at_ms);
-        publishSnapshot(snapshot.generated_at_ms ?? null);
+        publishSnapshot(snapshot.generated_at_ms ?? null, { isLive: true });
         const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
@@ -520,15 +520,14 @@ export default function WeatherMap() {
       try {
         const raw = await fetchJsonWithRetry(`/v1/history/${ts}`, { signal });
         const snapshot = parseIngestSnapshot(raw);
-        // Even historical fetches calibrate the clock — they carry the same
-        // generated_at_ms field and give us a fresh sample when the live
-        // poll happens to be on a slow cycle.
-        recordServerTime(snapshot.generated_at_ms);
-        // Historical snapshots are by definition old; publishing their
-        // generated_at_ms into the staleness store would trip the banner.
-        // The banner is a LIVE-data honesty signal — historical scrubbing
-        // doesn't change what the server's latest snapshot looks like, so
-        // we leave the store alone here.
+        // Historical snapshots carry intentionally old `generated_at_ms`
+        // values. Feeding them into the clock-offset calibration poisons
+        // `serverNow()` (Codex review, Tier 1 remediation — Fix 2) and
+        // publishing them into the staleness store would trip the banner.
+        // The banner + offset are LIVE-data honesty signals only, so we
+        // deliberately skip `recordServerTime` here and pass `isLive:false`
+        // to `publishSnapshot` so the store no-ops.
+        publishSnapshot(snapshot.generated_at_ms ?? null, { isLive: false });
         const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
@@ -548,7 +547,7 @@ export default function WeatherMap() {
         console.error('Failed to fetch historical snapshot:', err);
       }
     },
-    [renderFeatures, renderMotion, recordServerTime],
+    [renderFeatures, renderMotion],
   );
 
   // Keep `refreshCurrentFrameRef` pointed at a closure that re-fetches the

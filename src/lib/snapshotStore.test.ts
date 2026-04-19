@@ -18,28 +18,66 @@ describe('snapshotStore', () => {
     expect(result.current).toEqual({ generatedAtMs: null, clockOffset: 0 });
   });
 
-  it('publishSnapshot updates both generatedAtMs and clockOffset', () => {
+  it('publishSnapshot(live) updates both generatedAtMs and clockOffset', () => {
     const { result } = renderHook(() => useSnapshotState());
     act(() => {
-      publishSnapshot(Date.now() + 3_000);
+      publishSnapshot(Date.now() + 3_000, { isLive: true });
     });
     expect(result.current.generatedAtMs).toBe(Date.now() + 3_000);
     expect(result.current.clockOffset).toBe(3_000);
   });
 
-  it('publishSnapshot(null) preserves last generatedAtMs but zeroes offset', () => {
+  // Fix 1 (Codex pass 2, Critical): a live publish with missing
+  // `generated_at_ms` used to preserve the previous timestamp while zeroing
+  // the offset — so the banner kept comparing wall-clock time to the stale
+  // value and tripped ~90s later even while fresh (but untimestamped)
+  // snapshots kept arriving. Now we clear both to `null`/`0` so the banner
+  // degrades to "cannot tell".
+  it('publishSnapshot(null, live) CLEARS generatedAtMs to null (does not preserve)', () => {
     const { result } = renderHook(() => useSnapshotState());
     const ts = Date.now() + 4_000;
     act(() => {
-      publishSnapshot(ts);
+      publishSnapshot(ts, { isLive: true });
     });
+    expect(result.current.generatedAtMs).toBe(ts);
     expect(result.current.clockOffset).toBe(4_000);
 
     act(() => {
-      publishSnapshot(null);
+      publishSnapshot(null, { isLive: true });
     });
-    expect(result.current.generatedAtMs).toBe(ts);
+    // Key assertion: the stale timestamp is GONE, not preserved.
+    expect(result.current.generatedAtMs).toBeNull();
     expect(result.current.clockOffset).toBe(0);
+  });
+
+  // Fix 2 (Codex pass 2, Critical): historical fetches share the same
+  // snapshot payload shape (and `generated_at_ms` field) as live fetches.
+  // If they update the store the staleness banner trips and `serverNow()`
+  // gets poisoned. `isLive: false` must be a pure no-op.
+  it('publishSnapshot with { isLive: false } does NOT modify store state', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    const liveTs = Date.now() + 2_000;
+    act(() => {
+      publishSnapshot(liveTs, { isLive: true });
+    });
+    expect(result.current.generatedAtMs).toBe(liveTs);
+    expect(result.current.clockOffset).toBe(2_000);
+
+    // Historical scrub publishes an intentionally old ts. Store must stay
+    // pinned to the LIVE values from the prior publish.
+    const historicalTs = liveTs - 10 * 60_000; // 10 minutes earlier
+    act(() => {
+      publishSnapshot(historicalTs, { isLive: false });
+    });
+    expect(result.current.generatedAtMs).toBe(liveTs);
+    expect(result.current.clockOffset).toBe(2_000);
+
+    // Even a `null` historical publish must not clear prior live state.
+    act(() => {
+      publishSnapshot(null, { isLive: false });
+    });
+    expect(result.current.generatedAtMs).toBe(liveTs);
+    expect(result.current.clockOffset).toBe(2_000);
   });
 
   it('suppresses redundant notifications when state does not change', () => {
@@ -51,12 +89,12 @@ describe('snapshotStore', () => {
 
     const ts = Date.now();
     act(() => {
-      publishSnapshot(ts);
+      publishSnapshot(ts, { isLive: true });
     });
     const afterFirst = listener.mock.calls.length;
 
     act(() => {
-      publishSnapshot(ts); // same ts; same Date.now(); offset identical
+      publishSnapshot(ts, { isLive: true }); // same ts; same Date.now(); offset identical
     });
     // Second publish must not cause a re-render because nothing changed.
     expect(listener.mock.calls.length).toBe(afterFirst);

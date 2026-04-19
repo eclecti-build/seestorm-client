@@ -132,4 +132,115 @@ describe('fetchJsonWithRetry', () => {
     expect(result).toEqual({ n: 1 });
     expect(sleep).toHaveBeenCalledTimes(1);
   });
+
+  // Fix 3 (Codex review, Suggestion → prod bug): a hung fetch previously
+  // never resolved/rejected, so the retry path was never reached and the
+  // caller kept scheduling overlapping polls. The per-attempt timeout
+  // forces a deterministic fail-over window.
+  describe('per-attempt timeout (FETCH_TIMEOUT_MS)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('aborts a hung fetch after timeoutMs and kicks the retry path', async () => {
+      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+
+      // First two attempts hang forever UNTIL their per-attempt signal
+      // aborts, at which point they reject with an AbortError. Third
+      // attempt succeeds.
+      const hangingImpl = (_url: string, init?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const reason = init.signal?.reason;
+            reject(reason ?? new DOMException('aborted', 'AbortError'));
+          });
+        });
+      fetchMock
+        .mockImplementationOnce(hangingImpl)
+        .mockImplementationOnce(hangingImpl)
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: true }) });
+
+      const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+      const p = fetchJsonWithRetry('/x', { sleep, timeoutMs: 5_000 });
+
+      // Advance past the first two per-attempt timeouts. Each timeout
+      // aborts the attempt controller, causing the hanging fetch to
+      // reject with AbortError — which our handler recognizes as a
+      // timeout (not a caller abort) and retries.
+      await vi.advanceTimersByTimeAsync(5_000); // triggers attempt-1 timeout
+      await vi.advanceTimersByTimeAsync(5_000); // triggers attempt-2 timeout
+
+      const result = await p;
+      expect(result).toEqual({ ok: true });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      // Two retries (after attempts 1 and 2). Sleep is injected so the
+      // retry backoff is instant under our vi-fake-timer control.
+      expect(sleep).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives up with FetchRetryError after all attempts time out', async () => {
+      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+      const hangingImpl = (_url: string, init?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const reason = init.signal?.reason;
+            reject(reason ?? new DOMException('aborted', 'AbortError'));
+          });
+        });
+      fetchMock.mockImplementation(hangingImpl);
+
+      const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+      const p = fetchJsonWithRetry('/x', { sleep, timeoutMs: 1_000 });
+      // Swallow rejection at the mocked-promise layer so Node doesn't flag
+      // an unhandled rejection while we're driving fake timers.
+      const expectation = expect(p).rejects.toBeInstanceOf(FetchRetryError);
+
+      // Drive through maxAttempts per-attempt timeouts.
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expectation;
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('caller abort during a hung fetch propagates as AbortError with no retry', async () => {
+      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+      const controller = new AbortController();
+      fetchMock.mockImplementationOnce((_url: string, init?: { signal?: AbortSignal }) => {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const reason = init.signal?.reason;
+            reject(reason ?? new DOMException('aborted', 'AbortError'));
+          });
+        });
+      });
+
+      const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+      const p = fetchJsonWithRetry('/x', {
+        signal: controller.signal,
+        sleep,
+        timeoutMs: 30_000,
+      });
+
+      // Let the microtask queue settle before aborting so the fetch has
+      // wired up its abort listener.
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+
+      let caught: unknown;
+      try {
+        await p;
+      } catch (err) {
+        caught = err;
+      }
+      expect(isAbortError(caught)).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+    });
+  });
 });

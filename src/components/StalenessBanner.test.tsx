@@ -112,7 +112,7 @@ describe('StalenessBanner (store-driven, default mount path)', () => {
   it('stays hidden after a fresh publishSnapshot (FRESH state)', () => {
     vi.setSystemTime(new Date('2026-04-19T12:00:00Z'));
     // Publish a timestamp essentially equal to Date.now().
-    publishSnapshot(Date.now());
+    publishSnapshot(Date.now(), { isLive: true });
     render(<StalenessBanner tickMs={10_000} />);
     expect(screen.queryByTestId('staleness-banner')).toBeNull();
   });
@@ -120,7 +120,7 @@ describe('StalenessBanner (store-driven, default mount path)', () => {
   it('shows the banner once wall-clock time advances past threshold since last publish', () => {
     vi.setSystemTime(new Date('2026-04-19T12:00:00Z'));
     // Publish a "now" snapshot. clockOffset := 0. serverNow() == Date.now().
-    publishSnapshot(Date.now());
+    publishSnapshot(Date.now(), { isLive: true });
     render(<StalenessBanner tickMs={1_000} />);
     expect(screen.queryByTestId('staleness-banner')).toBeNull();
 
