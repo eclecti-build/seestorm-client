@@ -544,7 +544,9 @@ describe('GET /v1/active-events/{STATE}.json — Great Lakes allowlist', () => {
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('x-frame-options')).toBe('DENY');
     expect(res.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
-    expect(res.headers.get('permissions-policy')).toBe('geolocation=(), microphone=(), camera=()');
+    expect(res.headers.get('permissions-policy')).toBe(
+      'geolocation=(self), microphone=(), camera=()',
+    );
     expect(res.headers.get('content-security-policy-report-only')).toBeTruthy();
     // Enforcing header must NOT appear until the Open Decision #9 flip.
     expect(res.headers.get('content-security-policy')).toBeNull();
@@ -696,7 +698,9 @@ describe('security headers — baseline + CSP Report-Only', () => {
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('x-frame-options')).toBe('DENY');
     expect(res.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
-    expect(res.headers.get('permissions-policy')).toBe('geolocation=(), microphone=(), camera=()');
+    expect(res.headers.get('permissions-policy')).toBe(
+      'geolocation=(self), microphone=(), camera=()',
+    );
     const csp = res.headers.get('content-security-policy-report-only');
     expect(csp).toBeTruthy();
     // Deliberately Report-Only. The enforcing header MUST NOT appear until
