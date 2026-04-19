@@ -23,7 +23,7 @@
  *     Delays: 250ms, 1000ms, 2000ms.
  */
 
-import { FETCH_RETRY_DELAYS_MS, FETCH_RETRY_MAX_ATTEMPTS } from './constants';
+import { FETCH_RETRY_DELAYS_MS, FETCH_RETRY_MAX_ATTEMPTS, FETCH_TIMEOUT_MS } from './constants';
 
 export class FetchRetryError extends Error {
   readonly attempts: number;
@@ -56,6 +56,14 @@ export interface FetchWithRetryOptions {
    * vitest fake timers). Defaults to `setTimeout`.
    */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /**
+   * Per-attempt timeout (ms). Defaults to `FETCH_TIMEOUT_MS`. A hung fetch
+   * that neither resolves nor rejects would otherwise leave the caller's
+   * polling loop scheduling overlapping requests forever (Codex review —
+   * Fix 3). When the timeout fires the attempt aborts and the retry path
+   * picks up normally.
+   */
+  timeoutMs?: number;
 }
 
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -108,14 +116,36 @@ export async function fetchJsonWithRetry(
   const delays = options.retryDelaysMs ?? FETCH_RETRY_DELAYS_MS;
   const maxAttempts = options.maxAttempts ?? FETCH_RETRY_MAX_ATTEMPTS;
   const sleep = options.sleep ?? defaultSleep;
-  const signal = options.signal;
+  const callerSignal = options.signal;
+  const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
 
   let lastErr: unknown;
   let lastStatus: number | undefined;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (signal?.aborted) throw signalAbortReason(signal);
+    if (callerSignal?.aborted) throw signalAbortReason(callerSignal);
+
+    // Build a per-attempt AbortController that aborts when EITHER the
+    // caller's signal aborts OR the per-attempt timeout fires. We track
+    // which of the two fired so we can distinguish "caller wants out"
+    // (propagate, no retry) from "this attempt hung" (retry normally).
+    const attemptController = new AbortController();
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      attemptController.abort(
+        typeof DOMException !== 'undefined'
+          ? new DOMException(`fetch exceeded ${timeoutMs}ms`, 'TimeoutError')
+          : Object.assign(new Error(`fetch exceeded ${timeoutMs}ms`), { name: 'TimeoutError' }),
+      );
+    }, timeoutMs);
+    const onCallerAbort = () => attemptController.abort(signalAbortReason(callerSignal));
+    if (callerSignal) {
+      if (callerSignal.aborted) onCallerAbort();
+      else callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+
     try {
-      const resp = await fetch(url, { signal });
+      const resp = await fetch(url, { signal: attemptController.signal });
       if (!resp.ok) {
         lastStatus = resp.status;
         lastErr = new Error(`HTTP ${resp.status}`);
@@ -123,14 +153,31 @@ export async function fetchJsonWithRetry(
         return (await resp.json()) as unknown;
       }
     } catch (err) {
-      if (isAbortError(err)) throw err;
-      lastErr = err;
+      // Caller-driven aborts: propagate unchanged (do not retry).
+      if (callerSignal?.aborted) throw signalAbortReason(callerSignal);
+      // Per-attempt timeout: this surfaces as an AbortError from fetch
+      // because we aborted `attemptController`. We must NOT treat that as
+      // a caller abort — record it as the last error so the retry path
+      // engages instead of propagating out.
+      if (timedOut) {
+        lastErr = err instanceof Error ? err : new Error(`fetch exceeded ${timeoutMs}ms`);
+      } else if (isAbortError(err)) {
+        // A non-timeout, non-caller abort reached us — preserve original
+        // behavior: treat as an intentional abort and propagate.
+        throw err;
+      } else {
+        lastErr = err;
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      callerSignal?.removeEventListener('abort', onCallerAbort);
     }
+
     // Before sleeping, check whether we'll bother. If this was the last
     // attempt there's no delay to wait on — fall through to the throw.
     if (attempt < maxAttempts - 1) {
       const delay = delays[Math.min(attempt, delays.length - 1)];
-      await sleep(delay, signal);
+      await sleep(delay, callerSignal);
     }
   }
 
