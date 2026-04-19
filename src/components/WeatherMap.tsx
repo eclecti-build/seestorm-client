@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, startTransition } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import * as turf from '@turf/turf';
@@ -466,13 +466,20 @@ export default function WeatherMap() {
         userState: userStateRef.current ?? undefined,
         userPoint: userPointRef.current ?? undefined,
       });
-      setAllAlerts(listAlerts);
-      setSnapshotTime(new Date(snapshot.generated_at));
-      renderFeatures(mapFeatures);
-      // Use the filtered set so storm-motion arrows respect the same
-      // userState scoping as the polygons/list. Otherwise users with a saved
-      // ZIP see arrows from the other 7 states leaking through.
-      renderMotion(motionAlerts);
+      // Defer the heavy state apply off the click thread. `source.setData()`
+      // with the full GeoJSON blob is what pinned production INP at 2,104 ms
+      // on the LIVE pill (swarm audit 2026-04-18, Tier 1 #1). React 19's
+      // startTransition lets the click handler return immediately and lets
+      // MapLibre parse/diff polygons on a lower-priority render pass.
+      startTransition(() => {
+        setAllAlerts(listAlerts);
+        setSnapshotTime(new Date(snapshot.generated_at));
+        renderFeatures(mapFeatures);
+        // Use the filtered set so storm-motion arrows respect the same
+        // userState scoping as the polygons/list. Otherwise users with a saved
+        // ZIP see arrows from the other 7 states leaking through.
+        renderMotion(motionAlerts);
+      });
     } catch (err) {
       console.error('Failed to fetch live snapshot:', err);
     }
@@ -491,10 +498,15 @@ export default function WeatherMap() {
           userState: userStateRef.current ?? undefined,
           userPoint: userPointRef.current ?? undefined,
         });
-        setAllAlerts(listAlerts);
-        setSnapshotTime(new Date(snapshot.generated_at));
-        renderFeatures(mapFeatures);
-        renderMotion(motionAlerts);
+        // Same rationale as fetchLive — defer the heavy state apply so the
+        // playback-bar click handler returns fast. See Tier 1 #1 in the swarm
+        // audit (2026-04-18).
+        startTransition(() => {
+          setAllAlerts(listAlerts);
+          setSnapshotTime(new Date(snapshot.generated_at));
+          renderFeatures(mapFeatures);
+          renderMotion(motionAlerts);
+        });
       } catch (err) {
         console.error('Failed to fetch historical snapshot:', err);
       }
@@ -544,9 +556,9 @@ export default function WeatherMap() {
   // is a false positive here.
   useEffect(() => {
     if (!mapReady || !isLive) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; setState post-await
     void fetchLive();
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; setState post-await
     void fetchHistory();
     const interval = setInterval(() => {
       void fetchLive();
@@ -559,7 +571,6 @@ export default function WeatherMap() {
   useEffect(() => {
     if (!mapReady || isLive) return;
     const entry = history[sliderValue];
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; setState post-await
     if (entry) void fetchHistorical(entry.ts);
   }, [mapReady, isLive, sliderValue, history, fetchHistorical]);
 
