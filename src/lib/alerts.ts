@@ -100,12 +100,7 @@ export function tierForEvent(event: string): AlertTier {
   return 'Advisory';
 }
 
-export type AlertFamily =
-  | 'Tornado'
-  | 'Severe Thunderstorm'
-  | 'Flash Flood'
-  | 'Flood'
-  | 'Other';
+export type AlertFamily = 'Tornado' | 'Severe Thunderstorm' | 'Flash Flood' | 'Flood' | 'Other';
 
 /**
  * Map an NWS event string to a coarse product family so the side panel can

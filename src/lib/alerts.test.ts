@@ -160,9 +160,7 @@ describe('colorForEvent / priorityForEvent', () => {
     // products, and it must rank adjacent to Flood Advisory in priority.
     expect(colorForEvent('Flood Statement')).not.toBe(FALLBACK_COLOR);
     expect(colorForEvent('Flood Statement')).toBe(colorForEvent('Flood Advisory'));
-    expect(priorityForEvent('Flood Statement')).toBeGreaterThan(
-      priorityForEvent('Flood Advisory'),
-    );
+    expect(priorityForEvent('Flood Statement')).toBeGreaterThan(priorityForEvent('Flood Advisory'));
     expect(priorityForEvent('Flood Statement')).toBeLessThan(priorityForEvent('Freeze Warning'));
   });
 

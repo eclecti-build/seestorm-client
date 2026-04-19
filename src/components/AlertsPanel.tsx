@@ -275,9 +275,7 @@ export default function AlertsPanel({
         // `bg-gray-900/95` + `backdrop-blur-sm` match the panel surface so
         // content scrolling under it reads as layered, not clipped.
         className={`w-full flex items-center justify-between py-1 text-left rounded hover:bg-gray-800 transition-colors ${
-          isCollapsed
-            ? 'px-1.5'
-            : 'sticky top-0 z-10 bg-gray-900/95 backdrop-blur-sm -mx-2 px-3.5'
+          isCollapsed ? 'px-1.5' : 'sticky top-0 z-10 bg-gray-900/95 backdrop-blur-sm -mx-2 px-3.5'
         }`}
       >
         <span className="text-[11px] uppercase tracking-wide text-gray-400">
