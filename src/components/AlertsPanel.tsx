@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   colorForEvent,
+  deriveMultiStateDisplay,
   groupByFamily,
   tierForEvent,
   type AlertFamily,
@@ -36,15 +37,25 @@ function AlertCard({
   selected,
   onSelect,
   now,
+  userState,
 }: {
   alert: WeatherAlert;
   selected: boolean;
   onSelect: (a: WeatherAlert) => void;
   now: number;
+  userState?: string;
 }) {
   const color = colorForEvent(alert.properties.event);
   const tier = tierForEvent(alert.properties.event);
   const url = alert.properties.url;
+
+  // Trim cross-border counties from the rendered areaDesc when we know the
+  // user's state, and badge multi-state alerts so users understand the
+  // alert also covers other states. Both derivations live in
+  // `deriveMultiStateDisplay` so the selected-alert popup in WeatherMap
+  // stays in lockstep. The underlying filter (`alertTouchesState`) is
+  // unchanged — this is display-only cleanup.
+  const { areaDesc, regionalLabel } = deriveMultiStateDisplay(alert, userState);
 
   return (
     <button
@@ -68,7 +79,8 @@ function AlertCard({
         </span>
         <span className="ml-auto text-[10px] text-gray-400">{tier}</span>
       </div>
-      <div className="text-xs text-gray-100 line-clamp-2">{alert.properties.areaDesc}</div>
+      <div className="text-xs text-gray-100 line-clamp-2">{areaDesc}</div>
+      {regionalLabel && <div className="text-[10px] text-gray-400 mt-0.5">{regionalLabel}</div>}
       <div className="flex items-center justify-between mt-1 text-[11px]">
         <RelativeExpiry iso={alert.properties.expires} now={now} />
         {url && (
@@ -93,12 +105,14 @@ function FamilySection({
   selectedId,
   onSelect,
   now,
+  userState,
 }: {
   family: AlertFamily;
   alerts: WeatherAlert[];
   selectedId: string | null;
   onSelect: (a: WeatherAlert) => void;
   now: number;
+  userState?: string;
 }) {
   const color = colorForEvent(alerts[0]?.properties.event ?? '');
   return (
@@ -122,7 +136,14 @@ function FamilySection({
           const key = a.properties.nwsId ?? `${family}-${i}`;
           const selected = selectedId !== null && a.properties.nwsId === selectedId;
           return (
-            <AlertCard key={key} alert={a} selected={selected} onSelect={onSelect} now={now} />
+            <AlertCard
+              key={key}
+              alert={a}
+              selected={selected}
+              onSelect={onSelect}
+              now={now}
+              userState={userState}
+            />
           );
         })}
       </div>
@@ -136,6 +157,13 @@ export interface AlertsPanelProps {
   selectedId?: string | null;
   /** Injectable "now" for stable relative-expiry rendering in tests. */
   now?: number;
+  /**
+   * USPS 2-letter code of the user's saved state (if any). When set, each
+   * card trims its `areaDesc` to just the counties in this state and badges
+   * multi-state alerts so users still see the full scope. Display-only —
+   * does not change which alerts are rendered.
+   */
+  userState?: string;
 }
 
 export default function AlertsPanel({
@@ -143,6 +171,7 @@ export default function AlertsPanel({
   onSelect,
   selectedId = null,
   now,
+  userState,
 }: AlertsPanelProps) {
   // Pure — derived straight from the input alerts so the panel re-renders
   // cleanly whenever the upstream snapshot changes.
@@ -221,6 +250,7 @@ export default function AlertsPanel({
               selectedId={selectedId}
               onSelect={onSelect}
               now={effectiveNow}
+              userState={userState}
             />
           ))}
         </div>

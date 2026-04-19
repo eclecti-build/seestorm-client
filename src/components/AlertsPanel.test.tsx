@@ -218,4 +218,53 @@ describe('<AlertsPanel />', () => {
       expect(region).not.toHaveClass('w-80');
     });
   });
+
+  // Multi-state NWS products (Freeze Warnings covering IN+MI+OH, tri-state
+  // Frost Advisories, river Flood Warnings spanning IN+MI) legitimately
+  // touch the user's state but list cross-border counties in `areaDesc`.
+  // The card trims the rendered list to just the user's state and badges
+  // the alert as regional so the broader scope stays visible.
+  describe('multi-state alert display (userState filtering)', () => {
+    it('filters areaDesc by state suffix and renders a regional badge referencing other states', () => {
+      const multi = build({
+        nws_id: 'FREEZE.1',
+        event_type: 'Freeze Warning',
+        area_desc: 'Elkhart, IN; Branch, MI; St. Joseph, MI',
+        states: ['IN', 'MI'],
+      });
+      render(<AlertsPanel alerts={[multi]} onSelect={() => {}} now={FIXED_NOW} userState="IN" />);
+
+      // Only the Indiana county is rendered in the area list.
+      expect(screen.getByText('Elkhart, IN')).toBeInTheDocument();
+      expect(screen.queryByText(/Branch, MI/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/St\. Joseph, MI/)).not.toBeInTheDocument();
+
+      // Badge names the user's state and pluralizes "other state" for N=1.
+      expect(screen.getByText(/Regional — covers IN \+ 1 other state/)).toBeInTheDocument();
+    });
+
+    it('omits the regional badge for single-state alerts', () => {
+      const single = build({
+        nws_id: 'TO.1',
+        event_type: 'Tornado Warning',
+        area_desc: 'Elkhart, IN',
+        states: ['IN'],
+      });
+      render(<AlertsPanel alerts={[single]} onSelect={() => {}} now={FIXED_NOW} userState="IN" />);
+
+      expect(screen.queryByText(/Regional/)).not.toBeInTheDocument();
+    });
+
+    it('renders the full areaDesc unfiltered when userState is undefined', () => {
+      const multi = build({
+        nws_id: 'FREEZE.1',
+        event_type: 'Freeze Warning',
+        area_desc: 'Elkhart, IN; Branch, MI; St. Joseph, MI',
+        states: ['IN', 'MI'],
+      });
+      render(<AlertsPanel alerts={[multi]} onSelect={() => {}} now={FIXED_NOW} />);
+
+      expect(screen.getByText('Elkhart, IN; Branch, MI; St. Joseph, MI')).toBeInTheDocument();
+    });
+  });
 });
