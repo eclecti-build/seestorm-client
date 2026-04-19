@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback, startTransition } from 'react';
 import maplibregl from 'maplibre-gl';
+import type { ExpressionSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import * as turf from '@turf/turf';
 import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '@/lib/radar';
@@ -49,7 +50,29 @@ const USER_LOCATION_ZOOM = 8;
 
 // Radar animation tuning. These values balance responsiveness (slider feels
 // immediate) against smoothness (no visible popping during playback).
-const RADAR_OPACITY = 0.28;
+//
+// Radar opacity ramps by zoom: intense when zoomed out (radar needs to punch
+// through the basemap at the 8-state default extent), lighter when zoomed in
+// (so county / city lines stay legible at the local view). The zoom-8 value
+// of 0.28 preserves the previously tuned county-zoom look exactly; the
+// zoom-5 bump to 0.6 and zoom-12 fade to 0.15 extend the ramp outward.
+//
+// Narrow cast: MapLibre's `ExpressionSpecification` is a recursive tuple union
+// that TS won't unify with the inferred readonly-tuple literal here. Declaring
+// a plain array and casting once via `unknown` keeps us out of `any` (which
+// CLAUDE.md forbids) while letting `setPaintProperty` and the layer paint
+// definition accept the expression.
+const RADAR_OPACITY_EXPR: ExpressionSpecification = [
+  'interpolate',
+  ['linear'],
+  ['zoom'],
+  5,
+  0.6,
+  8,
+  0.28,
+  12,
+  0.15,
+] as unknown as ExpressionSpecification;
 const CROSSFADE_MS = 300; // A↔B layer opacity crossfade
 const TILE_FADE_MS = 400; // MapLibre built-in in-tile fade
 
@@ -744,7 +767,13 @@ export default function WeatherMap() {
 
     // Crossfade — MapLibre animates these paint properties over CROSSFADE_MS
     // thanks to the `raster-opacity-transition` we set at layer creation.
-    m.setPaintProperty(incomingLayerId, 'raster-opacity', RADAR_OPACITY);
+    //
+    // Critical: the "restore" side sets the full zoom-interpolation expression,
+    // NOT a scalar. Passing a scalar here would clobber the zoom ramp the first
+    // time the user steps the slider, leaving the radar stuck at whatever
+    // opacity we happened to pick. The "inactive" side still goes to scalar 0 —
+    // fully transparent is opacity-value-independent of zoom.
+    m.setPaintProperty(incomingLayerId, 'raster-opacity', RADAR_OPACITY_EXPR);
     m.setPaintProperty(currentLayerId, 'raster-opacity', 0);
 
     activeRadar.current = incoming;
@@ -883,7 +912,7 @@ export default function WeatherMap() {
         type: 'raster',
         source: 'radar-a',
         paint: {
-          'raster-opacity': RADAR_OPACITY,
+          'raster-opacity': RADAR_OPACITY_EXPR,
           // 300ms crossfade between layer A and B on slider change
           'raster-opacity-transition': { duration: CROSSFADE_MS },
           // Built-in MapLibre tile fade-in — softens intra-source pop when
