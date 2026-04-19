@@ -252,7 +252,18 @@ async function serveObject(
   key: string,
   cacheControl: string,
 ): Promise<Response> {
-  const ifNoneMatch = request.headers.get('if-none-match') ?? undefined;
+  // Strip surrounding double-quotes and the optional weak-etag prefix before
+  // handing the value to R2. Browsers send the header in its canonical quoted
+  // form per RFC 7232 §2.3 (e.g. `If-None-Match: "abc"` or `W/"abc"`), but
+  // R2's `etagDoesNotMatch` expects the raw hash — passing the quoted form
+  // throws inside the binding and surfaces as a Cloudflare 1101 (Worker
+  // exception) to the client. Normalizing here keeps the 304 fast-path working
+  // for every HTTP client that follows the spec.
+  const ifNoneMatch = request.headers
+    .get('if-none-match')
+    ?.trim()
+    .replace(/^W\//i, '')
+    .replace(/^"(.*)"$/, '$1');
   const object = await env.SNAPSHOTS.get(key, {
     onlyIf: ifNoneMatch ? { etagDoesNotMatch: ifNoneMatch } : undefined,
   });

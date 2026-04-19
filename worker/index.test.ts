@@ -885,10 +885,24 @@ interface FakeSnapshotBucket {
  */
 function fakeSnapshotBucket(key: string, body: string, etag: string): FakeSnapshotBucket {
   const quotedEtag = etag.startsWith('"') ? etag : `"${etag}"`;
+  // R2's real binding expects `etagDoesNotMatch` to be the RAW hash — passing
+  // the quoted or weak-etag form throws and surfaces as Cloudflare 1101 in
+  // production. The fake mirrors that contract so a Worker regression that
+  // forgets to normalize the client's If-None-Match header fails the test
+  // suite exactly the way it fails in prod.
+  const rawEtag = quotedEtag.slice(1, -1);
   return {
     async get(requestedKey, options) {
       if (requestedKey !== key) return null;
-      const ifMatchesExisting = options?.onlyIf?.etagDoesNotMatch === quotedEtag;
+      const given = options?.onlyIf?.etagDoesNotMatch;
+      if (typeof given === 'string') {
+        if (given.startsWith('"') || given.startsWith('W/') || given.endsWith('"')) {
+          throw new Error(
+            `R2 etag fake: etagDoesNotMatch must be the raw hash, got ${JSON.stringify(given)}`,
+          );
+        }
+      }
+      const ifMatchesExisting = given === rawEtag;
       const base: FakeR2Object = {
         key,
         httpEtag: quotedEtag,
@@ -998,5 +1012,35 @@ describe('GET /v1/active-events.json — ETag / 304 / SWR contract', () => {
     expect(res.headers.get('etag')).toBe(ETAG);
     const text = await res.text();
     expect(text).toBe(BODY);
+  });
+
+  // Regression: every real browser sends If-None-Match in quoted form per RFC
+  // 7232 §2.3. Before the Worker started normalizing, passing the quoted
+  // value straight to R2's `etagDoesNotMatch` threw inside the binding and
+  // surfaced as Cloudflare 1101 to the client — every polling revalidation
+  // after the first fetch would 500. Keep this test nailed down.
+  it('returns 304 for quoted If-None-Match (real browser form)', async () => {
+    const env = envWithSnapshots(fakeSnapshotBucket(KEY, BODY, ETAG));
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events.json', {
+        headers: { 'If-None-Match': ETAG }, // e.g. `"snapshot-v1-abc"`
+      }),
+      env,
+    );
+    expect(res.status).toBe(304);
+    expect(res.headers.get('etag')).toBe(ETAG);
+  });
+
+  // Weak-etag variant — HTTP lets servers emit `W/"..."` and clients echo it
+  // back the same way. Strip the prefix the same as the plain quoted form.
+  it('returns 304 for weak-etag If-None-Match (W/"...")', async () => {
+    const env = envWithSnapshots(fakeSnapshotBucket(KEY, BODY, ETAG));
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events.json', {
+        headers: { 'If-None-Match': `W/${ETAG}` },
+      }),
+      env,
+    );
+    expect(res.status).toBe(304);
   });
 });
