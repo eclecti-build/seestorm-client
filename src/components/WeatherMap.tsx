@@ -1025,6 +1025,19 @@ export default function WeatherMap() {
         WARNING_COLORS['Flash Flood Warning'],
         'Flash Flood Watch',
         WARNING_COLORS['Flash Flood Watch'],
+        // Plain hydrologic Flood products. Distinct from Flash Flood — these
+        // are the slower-onset river / areal Warnings the NWS issues as
+        // "FLW" / "FLS". Without these cases the polygon fell back to the
+        // gray default and visually read as low-urgency despite being a
+        // life-safety Warning.
+        'Flood Warning',
+        WARNING_COLORS['Flood Warning'],
+        'Flood Watch',
+        WARNING_COLORS['Flood Watch'],
+        'Flood Advisory',
+        WARNING_COLORS['Flood Advisory'],
+        'Flood Statement',
+        WARNING_COLORS['Flood Statement'],
         '#888888',
       ];
 
@@ -1119,18 +1132,118 @@ export default function WeatherMap() {
           // value geographic reference when a storm crosses WI/MN/IL lines,
           // so we want them unambiguously readable through the overlays.
           'line-color': '#e5e7eb',
-          'line-width': 1.8,
-          'line-opacity': 0.8,
+          // Fade at regional zoom so the overall storm systems read cleanly
+          // when the map is pulled out — state borders are still present as
+          // reference, just not dominating the view. Restored to full weight
+          // by zoom 8 where county-level detail matters.
+          'line-width': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            5,
+            0.9,
+            8,
+            1.8,
+            12,
+            1.8,
+          ] as unknown as ExpressionSpecification,
+          'line-opacity': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            5,
+            0.35,
+            8,
+            0.8,
+            12,
+            0.8,
+          ] as unknown as ExpressionSpecification,
         },
       });
 
-      // Outlines — line weight + dash pattern reinforce the tier.
+      // Outlines — line weight + dash pattern reinforce the tier. Opacity +
+      // width are zoom-interpolated so flood-warning zones and other alert
+      // boundaries don't stencil-dominate the overall storm-system view at
+      // regional zoom (5–7). By zoom 8 (county-level) the full-weight look
+      // is restored. The fill still carries the urgency signal — this only
+      // softens the outline contribution when pulled out.
+      const alertWarningWidth: ExpressionSpecification = [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        5,
+        1.2,
+        8,
+        3,
+        12,
+        3,
+      ] as unknown as ExpressionSpecification;
+      const alertWarningOpacity: ExpressionSpecification = [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        5,
+        0.45,
+        8,
+        0.9,
+        12,
+        0.9,
+      ] as unknown as ExpressionSpecification;
+      const alertWatchWidth: ExpressionSpecification = [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        5,
+        0.9,
+        8,
+        2,
+        12,
+        2,
+      ] as unknown as ExpressionSpecification;
+      const alertWatchOpacity: ExpressionSpecification = [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        5,
+        0.35,
+        8,
+        0.75,
+        12,
+        0.75,
+      ] as unknown as ExpressionSpecification;
+      const alertAdvisoryWidth: ExpressionSpecification = [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        5,
+        0.75,
+        8,
+        1.5,
+        12,
+        1.5,
+      ] as unknown as ExpressionSpecification;
+      const alertAdvisoryOpacity: ExpressionSpecification = [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        5,
+        0.28,
+        8,
+        0.6,
+        12,
+        0.6,
+      ] as unknown as ExpressionSpecification;
+
       m.addLayer({
         id: 'alert-outlines-warning',
         type: 'line',
         source: 'alerts',
         filter: warningFilter,
-        paint: { 'line-color': eventColor, 'line-width': 3, 'line-opacity': 0.9 },
+        paint: {
+          'line-color': eventColor,
+          'line-width': alertWarningWidth,
+          'line-opacity': alertWarningOpacity,
+        },
       });
       m.addLayer({
         id: 'alert-outlines-watch',
@@ -1139,8 +1252,8 @@ export default function WeatherMap() {
         filter: watchFilter,
         paint: {
           'line-color': eventColor,
-          'line-width': 2,
-          'line-opacity': 0.75,
+          'line-width': alertWatchWidth,
+          'line-opacity': alertWatchOpacity,
           'line-dasharray': [2, 2],
         },
       });
@@ -1149,7 +1262,11 @@ export default function WeatherMap() {
         type: 'line',
         source: 'alerts',
         filter: advisoryFilter,
-        paint: { 'line-color': eventColor, 'line-width': 1.5, 'line-opacity': 0.6 },
+        paint: {
+          'line-color': eventColor,
+          'line-width': alertAdvisoryWidth,
+          'line-opacity': alertAdvisoryOpacity,
+        },
       });
 
       // ---------------------------------------------------------------------

@@ -19,6 +19,10 @@ const FAMILY_EVENT_EXEMPLAR: Record<AlertFamily, string> = {
   Tornado: 'Tornado Warning',
   'Severe Thunderstorm': 'Severe Thunderstorm Warning',
   'Flash Flood': 'Flash Flood Warning',
+  // Plain hydrologic Flood family — shares the wave glyph with Flash Flood
+  // (see alertIcons: `iconForEvent` substring-matches on 'Flood'), and the
+  // Warning exemplar carries the red palette entry we just added.
+  Flood: 'Flood Warning',
   Other: 'Special Weather Statement',
 };
 
@@ -262,7 +266,19 @@ export default function AlertsPanel({
         aria-controls="alerts-panel-body"
         aria-label={isCollapsed ? 'Expand alerts panel' : 'Collapse alerts panel'}
         title={isCollapsed ? 'Expand' : 'Collapse'}
-        className="w-full flex items-center justify-between px-1.5 py-1 text-left rounded hover:bg-gray-800 transition-colors"
+        // Sticky when expanded: the parent div is the scroll container
+        // (`overflow-y-auto` + `ss-alerts-maxh`), so `sticky top-0` pins the
+        // collapse toggle at the top of the viewport while the alert list
+        // scrolls beneath it. Negative horizontal margin + bumped padding
+        // lets the header span the full panel width (cancelling the parent's
+        // `p-2`) so the sticky bar visually covers scrolling content behind.
+        // `bg-gray-900/95` + `backdrop-blur-sm` match the panel surface so
+        // content scrolling under it reads as layered, not clipped.
+        className={`w-full flex items-center justify-between py-1 text-left rounded hover:bg-gray-800 transition-colors ${
+          isCollapsed
+            ? 'px-1.5'
+            : 'sticky top-0 z-10 bg-gray-900/95 backdrop-blur-sm -mx-2 px-3.5'
+        }`}
       >
         <span className="text-[11px] uppercase tracking-wide text-gray-400">
           Active alerts ({alerts.length})

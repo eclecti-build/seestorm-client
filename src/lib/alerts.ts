@@ -24,6 +24,24 @@ export const WARNING_COLORS: Record<string, string> = {
   'Severe Thunderstorm Watch': '#DB7093',
   'Flash Flood Warning': '#8B0000',
   'Flash Flood Watch': '#2E8B57',
+  // Plain hydrologic Flood products (NWS "FLW" / "FLS" — river + areal flood,
+  // slower onset than Flash Flood). Previously fell through to gray, which
+  // read as low-urgency for a life-safety Warning. Red family so the tier is
+  // unmistakable, but one step less hot than Flash Flood's dark red to
+  // preserve the "flash = faster / more urgent" hierarchy. Matching Watch /
+  // Advisory tones follow the 3-per-family shape used below (Watch in
+  // sea-green cousin, Advisory in muted steel-blue).
+  'Flood Warning': '#B22222',
+  'Flood Watch': '#3CB371',
+  'Flood Advisory': '#6CA6CD',
+  // Flood Statement (NWS "FLS") is the status/update message attached to an
+  // active Flood Warning — continues / recedes / cancels. `tierForEvent`
+  // lands it in Advisory (no " Warning" / " Watch" suffix), so it shares
+  // the same steel-blue tone as Flood Advisory and inherits the thinnest
+  // outline + most transparent fill. Without this entry it would stay in
+  // the Flood family (via `alertFamily`'s substring match) but render gray
+  // on the map — an inconsistency flagged in Codex iter-2.
+  'Flood Statement': '#6CA6CD',
   'Special Weather Statement': '#FFE4B5',
   // Cold-air products. Inspired by the NWS public hazards palette but nudged
   // toward cool blues/purples so they read as "cold" next to the warm severe
@@ -31,9 +49,9 @@ export const WARNING_COLORS: Record<string, string> = {
   // pattern already established for Tornado / Severe Thunderstorm / Flash
   // Flood, so the legend stays balanced and cold-air products don't visually
   // dominate despite being low-urgency. Cousins ("Hard Freeze Warning",
-  // "Frost Advisory") intentionally fall back to gray the same way plain
-  // "Flood Warning" does today; the icon still routes them to the snowflake
-  // glyph via substring match, so the family affiliation is still legible.
+  // "Frost Advisory") intentionally fall back to gray; the icon still
+  // routes them to the snowflake glyph via substring match, so the family
+  // affiliation is still legible.
   'Freeze Warning': '#483D8B',
   'Freeze Watch': '#5F9EA0',
 };
@@ -44,10 +62,18 @@ export const WARNING_PRIORITY: Record<string, number> = {
   'Tornado Warning': 0,
   'Severe Thunderstorm Warning': 1,
   'Flash Flood Warning': 2,
+  // Plain Flood Warning sits immediately after Flash Flood Warning in the
+  // warning band — same life-safety tier, slower onset.
+  'Flood Warning': 2.5,
   'Tornado Watch': 3,
   'Severe Thunderstorm Watch': 4,
   'Flash Flood Watch': 5,
+  'Flood Watch': 5.5,
   'Special Weather Statement': 6,
+  'Flood Advisory': 6.5,
+  // FLS rides with Flood Advisory — same Advisory tier, same hydrologic
+  // family, just a message product rather than a new threat tier.
+  'Flood Statement': 6.6,
   // Cold-air products rank below SPS — non-life-threatening, slow-onset.
   // Matches the 2-per-family shape of the severe palette above.
   'Freeze Warning': 7,
@@ -74,18 +100,29 @@ export function tierForEvent(event: string): AlertTier {
   return 'Advisory';
 }
 
-export type AlertFamily = 'Tornado' | 'Severe Thunderstorm' | 'Flash Flood' | 'Other';
+export type AlertFamily =
+  | 'Tornado'
+  | 'Severe Thunderstorm'
+  | 'Flash Flood'
+  | 'Flood'
+  | 'Other';
 
 /**
  * Map an NWS event string to a coarse product family so the side panel can
  * group related watches + warnings together. Substring match lets new
  * variants (e.g. "Tornado Emergency") group under the expected family
  * without code changes.
+ *
+ * Order matters: 'Flash Flood' must be checked before 'Flood' so "Flash
+ * Flood Warning" doesn't collapse into the slower-onset Flood family. These
+ * are distinct NWS product lines (rapid vs. areal/river) and should stay
+ * visually separate in the side panel.
  */
 export function alertFamily(event: string): AlertFamily {
   if (event.includes('Tornado')) return 'Tornado';
   if (event.includes('Severe Thunderstorm')) return 'Severe Thunderstorm';
   if (event.includes('Flash Flood')) return 'Flash Flood';
+  if (event.includes('Flood')) return 'Flood';
   return 'Other';
 }
 
@@ -93,6 +130,11 @@ export const FAMILY_ORDER: readonly AlertFamily[] = [
   'Tornado',
   'Severe Thunderstorm',
   'Flash Flood',
+  // Plain hydrologic Flood products (Flood Warning / Watch / Advisory) —
+  // slower onset than Flash Flood, but still a life-safety warning. Ordered
+  // directly after Flash Flood so the two water-hazard families sit
+  // together in the side panel.
+  'Flood',
   'Other',
 ];
 

@@ -75,13 +75,36 @@ describe('alertFamily', () => {
     expect(alertFamily('Flash Flood Watch')).toBe('Flash Flood');
   });
 
+  it('keeps Flash Flood distinct from the slower-onset Flood family', () => {
+    // Order-sensitive: 'Flash Flood' substring check must win over the
+    // broader 'Flood' match so a Flash Flood Warning (rapid, life-threat)
+    // never collapses into the plain-Flood bucket (slower river/areal).
+    // These are different NWS product lines and belong in different
+    // side-panel sections.
+    expect(alertFamily('Flash Flood Warning')).toBe('Flash Flood');
+    expect(alertFamily('Flood Warning')).toBe('Flood');
+    expect(alertFamily('Flood Watch')).toBe('Flood');
+    expect(alertFamily('Flood Advisory')).toBe('Flood');
+    // FLS (Flood Statement) is the status/update message for an active
+    // Flood Warning — it belongs in the Flood family, not Other.
+    expect(alertFamily('Flood Statement')).toBe('Flood');
+  });
+
   it('puts unknown events in the Other bucket', () => {
     expect(alertFamily('Winter Storm Warning')).toBe('Other');
     expect(alertFamily('Special Weather Statement')).toBe('Other');
   });
 
   it('keeps FAMILY_ORDER stable', () => {
-    expect(FAMILY_ORDER).toEqual(['Tornado', 'Severe Thunderstorm', 'Flash Flood', 'Other']);
+    // Flood sits between Flash Flood and Other — water-hazard families
+    // cluster together visually in the side panel.
+    expect(FAMILY_ORDER).toEqual([
+      'Tornado',
+      'Severe Thunderstorm',
+      'Flash Flood',
+      'Flood',
+      'Other',
+    ]);
   });
 });
 
@@ -99,9 +122,8 @@ describe('colorForEvent / priorityForEvent', () => {
     // now resolve to dedicated hexes, distinct from each other.
     //
     // Cousins — Hard Freeze Warning, Hard Freeze Watch, Frost Advisory —
-    // intentionally fall back to FALLBACK_COLOR, matching how plain "Flood
-    // Warning" behaves against "Flash Flood Warning". The legend stays at
-    // the 2-per-family shape; icon routing handles cousins via substring.
+    // intentionally fall back to FALLBACK_COLOR. The legend stays at the
+    // 2-per-family shape; icon routing handles cousins via substring.
     const warning = colorForEvent('Freeze Warning');
     const watch = colorForEvent('Freeze Watch');
     expect(warning).not.toBe(FALLBACK_COLOR);
@@ -111,12 +133,63 @@ describe('colorForEvent / priorityForEvent', () => {
     expect(colorForEvent('Frost Advisory')).toBe(FALLBACK_COLOR);
   });
 
+  it('returns distinct, non-fallback palette entries for plain Flood products', () => {
+    // Regression guard: the NWS "FLW" (Flood Warning) / "FLS" (Flood
+    // Statement / Advisory) product line used to fall through to
+    // FALLBACK_COLOR, rendering a life-safety Warning as a low-urgency
+    // gray polygon on the map. All three plain-Flood tiers must now
+    // resolve to dedicated hexes, distinct from each other AND from
+    // their Flash Flood cousins (so the "flash = faster / more urgent"
+    // visual hierarchy stays legible).
+    const floodWarn = colorForEvent('Flood Warning');
+    const floodWatch = colorForEvent('Flood Watch');
+    const floodAdv = colorForEvent('Flood Advisory');
+    expect(floodWarn).not.toBe(FALLBACK_COLOR);
+    expect(floodWatch).not.toBe(FALLBACK_COLOR);
+    expect(floodAdv).not.toBe(FALLBACK_COLOR);
+    expect(new Set([floodWarn, floodWatch, floodAdv]).size).toBe(3);
+    expect(floodWarn).not.toBe(colorForEvent('Flash Flood Warning'));
+    expect(floodWatch).not.toBe(colorForEvent('Flash Flood Watch'));
+  });
+
+  it('routes Flood Statement to a non-fallback color in the Advisory tier', () => {
+    // FLS asymmetry guard: `alertFamily` routes Flood Statement into the
+    // Flood bucket, but without a palette entry it would render gray on
+    // the map while sitting in the Flood section of the side panel. It
+    // shares Flood Advisory's tone since both are Advisory-tier hydrologic
+    // products, and it must rank adjacent to Flood Advisory in priority.
+    expect(colorForEvent('Flood Statement')).not.toBe(FALLBACK_COLOR);
+    expect(colorForEvent('Flood Statement')).toBe(colorForEvent('Flood Advisory'));
+    expect(priorityForEvent('Flood Statement')).toBeGreaterThan(
+      priorityForEvent('Flood Advisory'),
+    );
+    expect(priorityForEvent('Flood Statement')).toBeLessThan(priorityForEvent('Freeze Warning'));
+  });
+
   it('ranks warnings above watches of the same family', () => {
     expect(priorityForEvent('Tornado Warning')).toBeLessThan(priorityForEvent('Tornado Watch'));
     expect(priorityForEvent('Severe Thunderstorm Warning')).toBeLessThan(
       priorityForEvent('Severe Thunderstorm Watch'),
     );
     expect(priorityForEvent('Bogus Event')).toBe(99);
+  });
+
+  it('ranks plain Flood products just after their Flash Flood counterparts', () => {
+    // Flood Warning sits right after Flash Flood Warning (same life-safety
+    // band, slower onset). Watch / Advisory follow the same pattern within
+    // their respective tiers. This keeps the side-panel sort stable and
+    // the two water-hazard families adjacent.
+    expect(priorityForEvent('Flood Warning')).toBeGreaterThan(
+      priorityForEvent('Flash Flood Warning'),
+    );
+    expect(priorityForEvent('Flood Warning')).toBeLessThan(priorityForEvent('Tornado Watch'));
+    expect(priorityForEvent('Flood Watch')).toBeGreaterThan(priorityForEvent('Flash Flood Watch'));
+    expect(priorityForEvent('Flood Watch')).toBeLessThan(
+      priorityForEvent('Special Weather Statement'),
+    );
+    expect(priorityForEvent('Flood Advisory')).toBeGreaterThan(
+      priorityForEvent('Special Weather Statement'),
+    );
   });
 
   it('ranks Freeze Warning/Watch below Special Weather Statement, Warning above Watch', () => {
