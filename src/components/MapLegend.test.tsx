@@ -148,6 +148,26 @@ describe('<MapLegend />', () => {
     expect(row.className).toMatch(/opacity-40/);
   });
 
+  // Icon-presence regression (2026-04-19): the legend event rows should carry
+  // an event-type icon alongside the color swatch. We assert presence via
+  // data-testid rather than shape-snapshotting the SVG — snapshots rot and
+  // don't catch the actual contract (one icon per row).
+  describe('event-type icons', () => {
+    it('renders an icon for every event row when expanded', () => {
+      renderLegend();
+      fireEvent.click(screen.getByRole('button', { name: /^legend$/i }));
+
+      for (const event of Object.keys(WARNING_COLORS)) {
+        expect(screen.getByTestId(`map-legend-icon-${event}`)).toBeInTheDocument();
+      }
+    });
+
+    it('does not render icons while collapsed', () => {
+      renderLegend();
+      expect(screen.queryByTestId('map-legend-icon-Tornado Warning')).not.toBeInTheDocument();
+    });
+  });
+
   // Width-toggle regression (codex 2026-04-18): collapsed must hug text so
   // the stacked panel column doesn't eat mobile width. Expanded grows to
   // a fixed reading width for the tier/event rows.
