@@ -15,6 +15,13 @@
  *                                      YYYYMMDDTHHMMSSZ (e.g. 20260417T034500Z)
  */
 
+import {
+  LIVE_CACHE_CONTROL,
+  LIST_CACHE_CONTROL,
+  HISTORY_CACHE_CONTROL,
+  GEO_CACHE_CONTROL,
+} from './constants';
+
 export interface Env {
   /** Binding to the `seestorm-data` R2 bucket. Read-only from this Worker. */
   SNAPSHOTS: R2Bucket;
@@ -22,32 +29,19 @@ export interface Env {
   ASSETS: Fetcher;
 }
 
-/**
- * Edge cache for the live endpoint. Ingest rewrites the snapshot every 30s,
- * so a 10s TTL guaranteed a cache miss on every ~3rd client poll and hammered
- * R2. Align the TTL to the producer cadence so at most one R2 GET per edge
- * PoP per 30s window, regardless of how many users are watching.
- */
-const LIVE_CACHE_CONTROL = 'public, max-age=30, s-maxage=30';
-
-/** Historical snapshots are immutable once written — cache for a year. */
-const HISTORY_CACHE_CONTROL = 'public, max-age=31536000, immutable';
-
-/**
- * History list metadata. The list only changes when a new snapshot is written
- * (every 30s), and listing is an R2 class-A op that pages the full history/
- * prefix — by far the most expensive request we serve. A 60s TTL roughly
- * halves that load with at most one extra snapshot's worth of staleness.
- */
-const LIST_CACHE_CONTROL = 'public, max-age=60, s-maxage=60';
-
-/**
- * /v1/geo cache. The CF edge derives geo from the *requesting IP*, so the
- * answer is per-IP. We cache modestly at the edge (5min) with SWR so a flood
- * of clients in the same metro share a hit, and stale-while-revalidate keeps
- * latency low when the cache age rolls over.
- */
-const GEO_CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=60';
+// Cache-Control values live in `./constants` so the four header strings stay
+// in one place and match the audit contract verbatim
+// (docs/SWARM_AUDIT_2026-04-18.md — "Constants — paste-ready").
+//
+// LIVE now carries `stale-while-revalidate=30` — the thundering-herd mitigation
+// at 30s TTL rollover. The edge serves cached bytes to every concurrent client
+// while a single background fetch repopulates from R2, collapsing the worst-
+// case fan-out from N concurrent R2 GETs to 1.
+//
+// LIST adds SWR for the same reason on the (pricier) R2 list class-A op.
+// HISTORY stays immutable — archived timestamps never change content.
+// GEO gets an explicit max-age alongside s-maxage so browsers cache the
+// per-IP answer too, instead of revalidating on every client restart.
 
 /** Compact RFC3339-like timestamp: 20060102T150405Z (matches ingest's key format). */
 const TIMESTAMP_RE = /^\d{8}T\d{6}Z$/;
