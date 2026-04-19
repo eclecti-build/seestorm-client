@@ -438,12 +438,13 @@ function perStateFakeEnv(presentStates: readonly string[]): PerStateFakeBucket {
 }
 
 describe('GET /v1/active-events/{STATE}.json — Great Lakes allowlist', () => {
-  it('contains exactly the 8 Great Lakes states (canary — adding a state is a Worker PR)', () => {
+  it('contains exactly the 9 Great Lakes + Iowa states (canary — adding a state is a Worker PR)', () => {
     // Tripwire for the contract in CLAUDE.md: the allowlist must only
     // expand through a code-reviewed Worker change, coordinated with
     // ingest's NWS_AREA. If this test starts failing, confirm the ingest
     // PR is paired with the Worker PR before updating the expected set.
     expect([...PUBLIC_PER_STATE_SNAPSHOTS].sort()).toEqual([
+      'IA',
       'IL',
       'IN',
       'MI',

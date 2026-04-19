@@ -58,14 +58,15 @@ const TIMESTAMP_RE = /^\d{8}T\d{6}Z$/;
 const STATE_CODE_RE = /^[A-Z]{2}$/;
 
 // Explicit allowlist of per-state snapshot keys. Matches the ingest service's
-// configured NWS_AREA for the Great Lakes deployment. Adding a state here
-// must be coordinated with ingest's NWS_AREA env so clients don't see 404s.
-// National rollout = add the remaining USPS codes here.
+// configured NWS_AREA for the Great Lakes + Iowa deployment. Adding a state
+// here must be coordinated with ingest's NWS_AREA env so clients don't see
+// 404s. National rollout = add the remaining USPS codes here.
 //
 // This is the PUBLIC_SNAPSHOTS contract called out in CLAUDE.md: public API
 // surface is versioned and the set of snapshot keys served is code-reviewable,
 // not regex-derived. Regex-only acceptance predated multi-state ingest; with
-// 8 concrete states now in production the surface is worth making explicit.
+// 9 concrete states now in production (GL 8 + IA) the surface is worth
+// making explicit.
 export const PUBLIC_PER_STATE_SNAPSHOTS = new Set([
   'WI',
   'IL',
@@ -75,6 +76,7 @@ export const PUBLIC_PER_STATE_SNAPSHOTS = new Set([
   'NY',
   'OH',
   'PA',
+  'IA',
 ] as const);
 
 /** Union of USPS codes currently served by the per-state route. */
@@ -479,7 +481,7 @@ function parseHistoryKey(key: string): HistoryEntry | null {
  *
  * `state` is the USPS 2-letter code (`cf.regionCode`, e.g. "WI") — NOT the
  * full region name (`cf.region` — "Wisconsin"). The client compares this
- * against its USPS-keyed coverage map (MN/WI/IL/IN/MI/OH/PA/NY) to decide
+ * against its USPS-keyed coverage map (MN/WI/IA/IL/IN/MI/OH/PA/NY) to decide
  * whether to pre-fill the picker, so the code form is the only one that
  * actually matches against supported states.
  *

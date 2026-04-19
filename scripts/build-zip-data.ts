@@ -2,9 +2,9 @@
  * build-zip-data.ts — regenerate `public/data/zip-greatlakes.json`.
  *
  * Pulls the US Census 2020 ZCTA Gazetteer (public domain), filters down to
- * the 8 Great Lakes states (MN, WI, IL, IN, MI, OH, PA, NY), and writes the
- * compact `{[zip]: {lat, lon, state, county}}` shape consumed by
- * `src/lib/zipLookup.ts`.
+ * the 9 SeeStorm states (MN, WI, IA, IL, IN, MI, OH, PA, NY — GL 8 + Iowa),
+ * and writes the compact `{[zip]: {lat, lon, state, county}}` shape consumed
+ * by `src/lib/zipLookup.ts`.
  *
  * Why a script instead of build-time generation:
  *   - The Gazetteer is ~10 MB compressed and we only need ~80 KB of it.
@@ -48,14 +48,14 @@
  */
 
 import { createReadStream } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 // turf is already a dependency; we use it for point-in-polygon to assign
 // county/state to each ZCTA centroid.
 import * as turf from '@turf/turf';
 
-const TARGET_STATES = new Set(['MN', 'WI', 'IL', 'IN', 'MI', 'OH', 'PA', 'NY']);
+const TARGET_STATES = new Set(['MN', 'WI', 'IA', 'IL', 'IN', 'MI', 'OH', 'PA', 'NY']);
 
 const GAZETTEER_PATH = resolve('tmp/2020_Gaz_zcta_national.txt');
 const COUNTIES_GEOJSON_PATH = resolve('tmp/cb_2020_us_county_500k.geojson');
@@ -73,10 +73,11 @@ interface CountyFeatureProps {
   STATE_NAME?: string;
 }
 
-// FIPS state code → USPS code, for the 8 target states.
+// FIPS state code → USPS code, for the 9 target states (GL 8 + Iowa).
 const FIPS_TO_USPS: Record<string, string> = {
   '17': 'IL',
   '18': 'IN',
+  '19': 'IA',
   '26': 'MI',
   '27': 'MN',
   '36': 'NY',
@@ -140,8 +141,11 @@ async function main(): Promise<void> {
   console.log(`  ${zcs.length} ZCTAs`);
 
   console.log('Reading counties:', COUNTIES_GEOJSON_PATH);
-  const countiesRaw = await import(COUNTIES_GEOJSON_PATH, { assert: { type: 'json' } });
-  const counties = (countiesRaw.default ?? countiesRaw) as GeoJSON.FeatureCollection<
+  // readFile + JSON.parse avoids Windows ESM url-scheme limitation where
+  // `import('C:/...')` errors with ERR_UNSUPPORTED_ESM_URL_SCHEME. Same
+  // input, same parsed shape — just no dynamic-import round trip.
+  const countiesRaw = await readFile(COUNTIES_GEOJSON_PATH, 'utf8');
+  const counties = JSON.parse(countiesRaw) as GeoJSON.FeatureCollection<
     GeoJSON.Polygon | GeoJSON.MultiPolygon,
     CountyFeatureProps
   >;
