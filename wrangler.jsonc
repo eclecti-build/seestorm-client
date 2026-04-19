@@ -12,6 +12,14 @@
     // Next generates out/404.html for unmatched routes — serve it with a real 404 status
     // (NOT single-page-application, which would rewrite deep links to index.html and break routing).
     "not_found_handling": "404-page",
+    // Route ALL requests through the Worker first. Without this, CF serves
+    // matching static assets directly and the Worker's fetch handler never
+    // runs for HTML pages — meaning our CSP and other security headers
+    // would never reach the browser on the highest-value target (the root
+    // document). The Worker's fall-through still delegates back to
+    // env.ASSETS.fetch for non-API paths, so the static-asset path is
+    // preserved; the only cost is one extra isolate hop per request.
+    "run_worker_first": true,
   },
   // Private R2 bucket binding. Bucket has NO public access; only this Worker
   // (via binding) and the ingest service (via write-scoped API token) reach it.
