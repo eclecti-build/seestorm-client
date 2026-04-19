@@ -40,8 +40,8 @@ import MapLegend from './MapLegend';
 const WISCONSIN_CENTER: [number, number] = [-89.5, 44.5];
 const DEFAULT_ZOOM = 7;
 
-// Great Lakes default extent — covers the 8-state ingest scope
-// (MN/WI/IL/IN/MI/OH/PA/NY) with Lake Michigan at the visual center.
+// Great Lakes default extent — covers the 9-state ingest scope
+// (MN/WI/IA/IL/IN/MI/OH/PA/NY) with Lake Michigan at the visual center.
 const MIDWEST_CENTER: [number, number] = [-87, 43];
 const MIDWEST_ZOOM = 5;
 // Zoom we hydrate to when the user has a saved ZIP — close enough to read
@@ -52,7 +52,7 @@ const USER_LOCATION_ZOOM = 8;
 // immediate) against smoothness (no visible popping during playback).
 //
 // Radar opacity ramps by zoom: intense when zoomed out (radar needs to punch
-// through the basemap at the 8-state default extent), lighter when zoomed in
+// through the basemap at the 9-state default extent), lighter when zoomed in
 // (so county / city lines stay legible at the local view). The zoom-8 value
 // of 0.28 preserves the previously tuned county-zoom look exactly; the
 // zoom-5 bump to 0.75 and zoom-12 fade to 0.15 extend the ramp outward.
@@ -94,8 +94,8 @@ interface HistoryResponse {
 
 // Apply the per-state county-line filter on the `admin-counties-line` layer.
 // Only the selected state's counties render; if no state is selected (or the
-// state isn't in the 8-state scope), the filter hides every feature so a
-// zoomed-out user doesn't see a busy 8-state county mesh.
+// state isn't in the 9-state scope), the filter hides every feature so a
+// zoomed-out user doesn't see a busy 9-state county mesh.
 //
 // Pulled out of the component so the load handler and `handleLocationChange`
 // share one definition — drift between those two call sites would manifest
@@ -366,7 +366,7 @@ export default function WeatherMap() {
   // saved ZIP and updates the `admin-counties-user-highlight` layer's filter
   // to match (or hides the layer when no ZIP is set / counties haven't
   // loaded yet / no county contains the point — which can happen for ZIPs
-  // outside our 8-state coverage).
+  // outside our 9-state coverage).
   //
   // Held in a ref so the counties-loaded async callback in the map `load`
   // handler can re-resolve when its data arrives — without taking a
@@ -870,7 +870,7 @@ export default function WeatherMap() {
       attributionControl: {},
       // Bound GPU memory pressure. Default cache size is derived from viewport
       // and on a full-screen map can grow unbounded across pan/zoom — combined
-      // with the dual radar raster sources + the bundled 8-state county vector
+      // with the dual radar raster sources + the bundled 9-state county vector
       // source, that's enough to provoke Chromium's "context loss and was
       // blocked" guard on integrated/mobile GPUs after a long session. 32
       // tiles per source is plenty for the SeeStorm viewport range (zoom 5-12)
@@ -979,9 +979,11 @@ export default function WeatherMap() {
             applyUserCountyHighlightRef.current?.();
             // Build the county-name lookup once so zone-only alerts
             // (Tornado Watches) can be hydrated into MapLibre-drawable
-            // polygons. Lookup is global by NAME across all 8 states —
-            // cross-state hydration still works because alert area_desc
-            // carries state suffixes that countyGeometry filters on.
+            // polygons. Lookup is keyed by (state, name) across all 9
+            // covered states so same-named counties (Washington, Monroe,
+            // Lee, …) resolve to the correct state's polygon. Alert
+            // `area_desc` carries state suffixes that countyGeometry
+            // parses and filters on.
             // Dispatch through `refreshCurrentFrameRef` rather than
             // hardcoding fetchLive — the user may have scrubbed to history
             // while counties were loading, and we must not overwrite their
@@ -1075,7 +1077,7 @@ export default function WeatherMap() {
           'line-color': '#d1d5db',
           'line-width': 1.4,
           // Fade county lines at regional zoom so the radar can dominate the
-          // wide view and the 8-state mesh doesn't feel cluttered. Restored
+          // wide view and the 9-state mesh doesn't feel cluttered. Restored
           // to the previous 0.85 by zoom 8 — the county-zoom look is preserved.
           'line-opacity': [
             'interpolate',

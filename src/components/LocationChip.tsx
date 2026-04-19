@@ -128,9 +128,7 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
         // drop this result silently — the user already moved on.
         if (requestId !== zipRequestRef.current) return;
         if (!record) {
-          setZipError(
-            `${normalized} isn't in our coverage area (MN/WI/IA/IL/IN/MI/OH/PA/NY).`,
-          );
+          setZipError(`${normalized} isn't in our coverage area (MN/WI/IA/IL/IN/MI/OH/PA/NY).`);
           return;
         }
         const next: UserLocation = {

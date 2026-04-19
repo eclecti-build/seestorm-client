@@ -218,7 +218,10 @@ describe('buildAlertViews', () => {
       features: [
         {
           type: 'Feature',
-          properties: { NAME: 'Dane' },
+          // STATE is the FIPS numeric string the bundled
+          // `greatlakes-counties.geojson` carries on every feature. The
+          // lookup keys by (state, name) to avoid cross-state collisions.
+          properties: { NAME: 'Dane', STATE: '55' },
           geometry: STUB_GEOMETRY,
         },
       ],

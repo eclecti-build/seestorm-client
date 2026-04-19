@@ -66,7 +66,7 @@ describe('fetchGeoSuggestion', () => {
     expect(result?.state).toBe('WI');
   });
 
-  it('returns null when the inferred state is not in the 8-state coverage', async () => {
+  it('returns null when the inferred state is not in the 9-state coverage', async () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValue(jsonResponse({ zip: '94102', state: 'CA', lat: 37.77, lon: -122.42 }));
