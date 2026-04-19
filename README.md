@@ -1,6 +1,6 @@
 # SeeStorm — client
 
-Ad-free, real-time severe weather visualization for Great Lakes communities.
+Ad-free, real-time severe weather visualization for the Great Lakes and Iowa.
 Built on National Weather Service data.
 
 Ads and paywalls on data that can protect the public. That's what SeeStorm

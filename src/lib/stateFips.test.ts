@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { USPS_TO_FIPS, FIPS_TO_USPS, uspsToFips, fipsToUsps } from './stateFips';
 
 describe('USPS_TO_FIPS table', () => {
-  it('covers exactly the 8 Great Lakes states', () => {
+  it('covers exactly the 9 Great Lakes + Iowa states', () => {
     expect(Object.keys(USPS_TO_FIPS).sort()).toEqual([
+      'IA',
       'IL',
       'IN',
       'MI',
@@ -21,6 +22,7 @@ describe('USPS_TO_FIPS table', () => {
     // filter silently breaks for that state. The matching test for the
     // GeoJSON shape lives in `countyGeometry.test.ts`.
     expect(USPS_TO_FIPS).toEqual({
+      IA: '19',
       IL: '17',
       IN: '18',
       MI: '26',

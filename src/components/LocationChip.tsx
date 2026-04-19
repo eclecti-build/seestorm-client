@@ -14,7 +14,7 @@
 // Two visual states (no dismiss — MapLegend follows the same always-
 // visible rule, and the collapsed chip is one line):
 //   1. Collapsed — `LOCATION  All states ▸` or `LOCATION  WI ▸`.
-//   2. Expanded  — 8-button grid for MN / WI / IL / IN / MI / OH / PA / NY,
+//   2. Expanded  — 9-button grid for MN / WI / IA / IL / IN / MI / OH / PA / NY,
 //                  plus a "Show all states" action when a state is selected.
 
 import { useCallback, useId, useRef, useState } from 'react';
@@ -128,7 +128,9 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
         // drop this result silently — the user already moved on.
         if (requestId !== zipRequestRef.current) return;
         if (!record) {
-          setZipError(`${normalized} isn't in our coverage area (MN/WI/IL/IN/MI/OH/PA/NY).`);
+          setZipError(
+            `${normalized} isn't in our coverage area (MN/WI/IA/IL/IN/MI/OH/PA/NY).`,
+          );
           return;
         }
         const next: UserLocation = {
@@ -281,7 +283,7 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
           )}
 
           <div className="text-[10px] text-gray-500 pt-1 border-t border-gray-800">
-            Coverage: MN, WI, IL, IN, MI, OH, PA, NY
+            Coverage: MN, WI, IA, IL, IN, MI, OH, PA, NY
           </div>
         </div>
       )}

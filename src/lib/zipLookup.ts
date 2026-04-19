@@ -1,5 +1,5 @@
-// ZIP-to-coordinates lookup against a bundled JSON table for the 8 Great
-// Lakes states (MN, WI, IL, IN, MI, OH, PA, NY).
+// ZIP-to-coordinates lookup against a bundled JSON table for the 9 SeeStorm
+// states (MN, WI, IA, IL, IN, MI, OH, PA, NY — Great Lakes 8 + Iowa).
 //
 // The JSON is loaded via dynamic `import()` so it isn't pulled into the
 // initial JS bundle — it only ships down the wire when a user actually

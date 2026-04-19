@@ -1,4 +1,5 @@
-// USPS ↔ FIPS state-code mapping for the 8 Great Lakes states SeeStorm covers.
+// USPS ↔ FIPS state-code mapping for the 9 states SeeStorm covers
+// (Great Lakes 8 + Iowa).
 //
 // The runtime carries USPS codes everywhere ('WI', 'IL', etc. — see
 // `userLocation.ts`, `LocationChip.tsx`, `alerts.ts`). The bundled county
@@ -10,9 +11,10 @@
 // and the build script without pulling React or MapLibre into either.
 
 /**
- * USPS → FIPS for the 8 supported states. Other USPS codes return undefined.
+ * USPS → FIPS for the 9 supported states. Other USPS codes return undefined.
  */
 export const USPS_TO_FIPS: Readonly<Record<string, string>> = Object.freeze({
+  IA: '19',
   IL: '17',
   IN: '18',
   MI: '26',
@@ -24,7 +26,7 @@ export const USPS_TO_FIPS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 /**
- * FIPS → USPS for the 8 supported states. Useful when reading `STATE` off a
+ * FIPS → USPS for the 9 supported states. Useful when reading `STATE` off a
  * county feature for logging or debug surfaces.
  */
 export const FIPS_TO_USPS: Readonly<Record<string, string>> = Object.freeze(

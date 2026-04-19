@@ -2,10 +2,11 @@
  * build-county-data.ts — regenerate `public/geo/greatlakes-counties.geojson`.
  *
  * Reads the US Census 2020 cartographic boundary counties file (500k
- * resolution, public domain), filters to the 8 Great Lakes states
- * (MN, WI, IL, IN, MI, OH, PA, NY), normalizes the property names to match
- * the legacy `wi-counties.geojson` shape, and writes the combined GeoJSON
- * artifact consumed by `WeatherMap` and `buildCountyLookup`.
+ * resolution, public domain), filters to the 9 SeeStorm states
+ * (MN, WI, IA, IL, IN, MI, OH, PA, NY — Great Lakes 8 + Iowa), normalizes
+ * the property names to match the legacy `wi-counties.geojson` shape, and
+ * writes the combined GeoJSON artifact consumed by `WeatherMap` and
+ * `buildCountyLookup`.
  *
  * Why a script instead of build-time generation:
  *   - The TIGER source is ~12 MB zipped / ~18 MB raw shapefile, but the
@@ -45,11 +46,12 @@ import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import * as shapefile from 'shapefile';
 
-// Target FIPS codes for the 8 Great Lakes states. Numeric strings as TIGER
-// stores them; values are USPS codes for log readability.
+// Target FIPS codes for the 9 SeeStorm states (GL 8 + Iowa). Numeric strings
+// as TIGER stores them; values are USPS codes for log readability.
 const TARGET_FIPS: Record<string, string> = {
   '17': 'IL',
   '18': 'IN',
+  '19': 'IA',
   '26': 'MI',
   '27': 'MN',
   '36': 'NY',

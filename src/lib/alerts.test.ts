@@ -360,6 +360,20 @@ describe('alertTouchesState', () => {
     expect(alertTouchesState(ingest({ area_state: 'WI', states: [] }), 'WI')).toBe(true);
     expect(alertTouchesState(ingest({ area_state: 'IL', states: [] }), 'WI')).toBe(false);
   });
+
+  // Iowa coverage (2026-04-19 Phase 1). IA is the 9th state added to the
+  // SeeStorm scope alongside the Great Lakes 8. These tests pin the
+  // per-state filter behavior for IA alerts so a future refactor of the
+  // membership set doesn't silently drop Iowa.
+  it('matches Iowa alerts via area_state and cross-border states[]', () => {
+    expect(alertTouchesState(ingest({ area_state: 'IA' }), 'IA')).toBe(true);
+    expect(alertTouchesState(ingest({ area_state: 'ia' }), 'IA')).toBe(true);
+    // Cross-border IA/IL Tornado Watch should surface for users in either state.
+    expect(alertTouchesState(ingest({ area_state: 'IA', states: ['IA', 'IL'] }), 'IL')).toBe(true);
+    expect(alertTouchesState(ingest({ area_state: 'IL', states: ['IA', 'IL'] }), 'IA')).toBe(true);
+    // A WI-only alert should not match an IA user.
+    expect(alertTouchesState(ingest({ area_state: 'WI', states: ['WI'] }), 'IA')).toBe(false);
+  });
 });
 
 describe('filterAreaDescByState', () => {
