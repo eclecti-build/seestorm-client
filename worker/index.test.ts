@@ -3,6 +3,7 @@ import worker, {
   handleCspReport,
   listNewestHistoryEntries,
   parsePerStateCode,
+  PUBLIC_PER_STATE_SNAPSHOTS,
   serveGeoSuggestion,
   type Env,
   type R2BucketListOnly,
@@ -371,6 +372,183 @@ describe('parsePerStateCode', () => {
       expect(parsePerStateCode(path)).toBeNull();
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Per-state allowlist — GET /v1/active-events/{STATE}.json
+// ---------------------------------------------------------------------------
+//
+// The Worker MUST gate per-state requests on the explicit Great Lakes
+// allowlist BEFORE reading from R2. This keeps the public API surface
+// code-reviewable (client CLAUDE.md's PUBLIC_SNAPSHOTS rule) and avoids
+// paying an R2 class-B op per out-of-coverage probe.
+//
+// The allowlist and the ingest service's NWS_AREA deployment env are the
+// two places that define "what states are live" — they MUST stay in sync
+// or clients will see 404s for states the ingest publishes (allowlist
+// drift behind ingest) or probe R2 needlessly for states ingest doesn't
+// publish (allowlist drift ahead of ingest). Adding a state requires both.
+
+/**
+ * Build a SNAPSHOTS-only Env whose R2 `get` counts calls so allowlist tests
+ * can assert the short-circuit invariant (zero R2 calls for non-allowlisted
+ * codes). Seeds the bucket with an `active-events/{state}.json` object for
+ * each key in `presentStates`; anything else returns null.
+ */
+interface PerStateFakeBucket {
+  getCalls: number;
+  lastKey: string | undefined;
+  env: Env;
+}
+
+function perStateFakeEnv(presentStates: readonly string[]): PerStateFakeBucket {
+  const payload = new TextEncoder().encode('{"type":"FeatureCollection","features":[]}');
+  const tracker: PerStateFakeBucket = {
+    getCalls: 0,
+    lastKey: undefined,
+    // populated below
+    env: undefined as unknown as Env,
+  };
+  const present = new Set(presentStates.map((s) => `active-events/${s}.json`));
+  const bucket: Pick<R2Bucket, 'get'> = {
+    async get(key: string) {
+      tracker.getCalls += 1;
+      tracker.lastKey = key;
+      if (!present.has(key)) return null;
+      return {
+        key,
+        httpEtag: '"per-state-etag"',
+        size: payload.byteLength,
+        body: new Response(payload).body,
+        writeHttpMetadata(h: Headers) {
+          h.set('content-type', 'application/json; charset=utf-8');
+        },
+      } as unknown as R2ObjectBody;
+    },
+  };
+  tracker.env = {
+    SNAPSHOTS: bucket as unknown as R2Bucket,
+    ASSETS: {
+      fetch: () => {
+        throw new Error('ASSETS.fetch should not be called for /v1/* tests');
+      },
+    } as unknown as Fetcher,
+  };
+  return tracker;
+}
+
+describe('GET /v1/active-events/{STATE}.json — Great Lakes allowlist', () => {
+  it('contains exactly the 8 Great Lakes states (canary — adding a state is a Worker PR)', () => {
+    // Tripwire for the contract in CLAUDE.md: the allowlist must only
+    // expand through a code-reviewed Worker change, coordinated with
+    // ingest's NWS_AREA. If this test starts failing, confirm the ingest
+    // PR is paired with the Worker PR before updating the expected set.
+    expect([...PUBLIC_PER_STATE_SNAPSHOTS].sort()).toEqual([
+      'IL',
+      'IN',
+      'MI',
+      'MN',
+      'NY',
+      'OH',
+      'PA',
+      'WI',
+    ]);
+  });
+
+  it('serves 200 with the R2 body for an allowlisted state that is present in R2', async () => {
+    const tracker = perStateFakeEnv(['WI']);
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events/WI.json'),
+      tracker.env,
+    );
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toBe('{"type":"FeatureCollection","features":[]}');
+    // The allowlisted happy path DOES touch R2 exactly once.
+    expect(tracker.getCalls).toBe(1);
+    expect(tracker.lastKey).toBe('active-events/WI.json');
+  });
+
+  it('returns 404 when the state is allowlisted but the R2 key is missing', async () => {
+    // Transient ingest outage or pre-first-poll window: allowlist says MN
+    // is served, but R2 has no object yet. Still 404, still via the R2
+    // path (so the call counter increments — distinguishes this branch
+    // from the short-circuit below).
+    const tracker = perStateFakeEnv([]); // MN not in R2
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events/MN.json'),
+      tracker.env,
+    );
+    expect(res.status).toBe(404);
+    expect(tracker.getCalls).toBe(1);
+    expect(tracker.lastKey).toBe('active-events/MN.json');
+  });
+
+  it('returns 404 WITHOUT calling R2 for a well-formed but non-allowlisted state', async () => {
+    // The scaling invariant: an out-of-coverage probe (CA, TX, FL, ...)
+    // must short-circuit before the R2 call. Asserting call count = 0
+    // is the bright line separating "allowlisted but empty" from
+    // "not allowlisted at all" behavior.
+    const tracker = perStateFakeEnv(['WI', 'IL', 'IN', 'MI', 'MN', 'NY', 'OH', 'PA']);
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events/CA.json'),
+      tracker.env,
+    );
+    expect(res.status).toBe(404);
+    expect(tracker.getCalls).toBe(0);
+    const text = await res.text();
+    // Small distinguishable body so future debug observations tell this
+    // path apart from the generic "Not found" at a glance. Still plain
+    // text, still 404 — the wire shape is identical from the client's POV.
+    expect(text).toBe('state not available');
+  });
+
+  it('rejects lowercase codes at the shape gate (never reaches the allowlist)', async () => {
+    // parsePerStateCode returns null for lowercase — the request falls
+    // through to the /v1 router's final 404 with the generic body, and
+    // R2 is never consulted.
+    const tracker = perStateFakeEnv(['WI']);
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events/zz.json'),
+      tracker.env,
+    );
+    expect(res.status).toBe(404);
+    expect(tracker.getCalls).toBe(0);
+  });
+
+  it('rejects three-letter codes at the shape gate (never reaches the allowlist)', async () => {
+    const tracker = perStateFakeEnv(['WI']);
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events/XXX.json'),
+      tracker.env,
+    );
+    expect(res.status).toBe(404);
+    expect(tracker.getCalls).toBe(0);
+  });
+
+  it('applies the full baseline security header set to the allowlist short-circuit 404', async () => {
+    // A 404 from the allowlist gate is still a browser-rendered response
+    // and must carry the same hardening headers as every other response.
+    // Regression guard against someone "optimizing" the short-circuit by
+    // returning a bare Response without running it through notFound().
+    const tracker = perStateFakeEnv([]);
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events/CA.json'),
+      tracker.env,
+    );
+    expect(res.status).toBe(404);
+    expect(tracker.getCalls).toBe(0);
+    expect(res.headers.get('strict-transport-security')).toBe(
+      'max-age=31536000; includeSubDomains; preload',
+    );
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+    expect(res.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
+    expect(res.headers.get('permissions-policy')).toBe('geolocation=(), microphone=(), camera=()');
+    expect(res.headers.get('content-security-policy-report-only')).toBeTruthy();
+    // Enforcing header must NOT appear until the Open Decision #9 flip.
+    expect(res.headers.get('content-security-policy')).toBeNull();
+  });
 });
 
 /**

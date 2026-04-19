@@ -48,16 +48,37 @@ const TIMESTAMP_RE = /^\d{8}T\d{6}Z$/;
 
 /**
  * USPS 2-letter state code, uppercase only. The per-state R2 keys use this
- * exact shape (`active-events/{STATE}.json`), so any tightening here must
- * stay in lockstep with the ingest-side `nws.IsValidStateCode` allowlist.
+ * exact shape (`active-events/{STATE}.json`).
  *
- * Regex-only is intentional: full FIPS-membership validation lives at the
- * write side. The Worker accepts any well-formed token and returns 404 if
- * R2 has no matching object — which happens naturally for states ingest
- * isn't configured for, with no client-side coupling to the deployed area
- * list.
+ * Shape gate only — membership is enforced separately via
+ * `PUBLIC_PER_STATE_SNAPSHOTS` at the route handler. This split keeps
+ * `parsePerStateCode` a pure URL shape parser (used by focused unit tests)
+ * while the code-reviewable coverage decision lives in one data structure.
  */
 const STATE_CODE_RE = /^[A-Z]{2}$/;
+
+// Explicit allowlist of per-state snapshot keys. Matches the ingest service's
+// configured NWS_AREA for the Great Lakes deployment. Adding a state here
+// must be coordinated with ingest's NWS_AREA env so clients don't see 404s.
+// National rollout = add the remaining USPS codes here.
+//
+// This is the PUBLIC_SNAPSHOTS contract called out in CLAUDE.md: public API
+// surface is versioned and the set of snapshot keys served is code-reviewable,
+// not regex-derived. Regex-only acceptance predated multi-state ingest; with
+// 8 concrete states now in production the surface is worth making explicit.
+export const PUBLIC_PER_STATE_SNAPSHOTS = new Set([
+  'WI',
+  'IL',
+  'IN',
+  'MI',
+  'MN',
+  'NY',
+  'OH',
+  'PA',
+] as const);
+
+/** Union of USPS codes currently served by the per-state route. */
+export type PerStateCode = typeof PUBLIC_PER_STATE_SNAPSHOTS extends Set<infer T> ? T : never;
 
 /**
  * Extract a per-state code from `/v1/active-events/{STATE}.json`. Returns
@@ -183,8 +204,17 @@ async function handleApiRequest(request: Request, url: URL, env: Env): Promise<R
   // the slice they need instead of the full multi-state payload. Same cache
   // contract as the merged endpoint — the ingest writes both at the same
   // 30s cadence with identical cache headers.
+  //
+  // Allowlist check happens BEFORE any R2 call so out-of-coverage codes
+  // short-circuit to 404 without burning a class-B op. States in the
+  // allowlist but missing from R2 (e.g. transient ingest outage) still
+  // 404 via the usual serveObject path — both branches end at 404 with
+  // the full baseline security header set.
   const stateCode = parsePerStateCode(url.pathname);
   if (stateCode !== null) {
+    if (!PUBLIC_PER_STATE_SNAPSHOTS.has(stateCode as PerStateCode)) {
+      return notFound('state not available');
+    }
     return serveObject(request, env, `active-events/${stateCode}.json`, LIVE_CACHE_CONTROL);
   }
 
@@ -501,11 +531,11 @@ function buildObjectHeaders(object: R2Object, cacheControl: string): Headers {
   return headers;
 }
 
-function notFound(): Response {
+function notFound(body = 'Not found'): Response {
   const headers = new Headers({ 'content-type': 'text/plain; charset=utf-8' });
   applyBaselineSecurityHeaders(headers);
   applyCspReportOnly(headers);
-  return new Response('Not found', { status: 404, headers });
+  return new Response(body, { status: 404, headers });
 }
 
 function methodNotAllowed(allow = 'GET, HEAD'): Response {
