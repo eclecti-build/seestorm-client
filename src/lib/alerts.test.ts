@@ -92,12 +92,41 @@ describe('colorForEvent / priorityForEvent', () => {
     expect(colorForEvent('Unknown Event')).toBe(FALLBACK_COLOR);
   });
 
+  it('returns distinct palette entries for Freeze Warning + Watch', () => {
+    // Regression guard: freeze/frost shipped without any palette entries in
+    // the initial icon rollout, so Freeze Warning and Freeze Watch rendered
+    // gray on the map and were absent from the legend entirely. Both must
+    // now resolve to dedicated hexes, distinct from each other.
+    //
+    // Cousins — Hard Freeze Warning, Hard Freeze Watch, Frost Advisory —
+    // intentionally fall back to FALLBACK_COLOR, matching how plain "Flood
+    // Warning" behaves against "Flash Flood Warning". The legend stays at
+    // the 2-per-family shape; icon routing handles cousins via substring.
+    const warning = colorForEvent('Freeze Warning');
+    const watch = colorForEvent('Freeze Watch');
+    expect(warning).not.toBe(FALLBACK_COLOR);
+    expect(watch).not.toBe(FALLBACK_COLOR);
+    expect(warning).not.toBe(watch);
+    expect(colorForEvent('Hard Freeze Warning')).toBe(FALLBACK_COLOR);
+    expect(colorForEvent('Frost Advisory')).toBe(FALLBACK_COLOR);
+  });
+
   it('ranks warnings above watches of the same family', () => {
     expect(priorityForEvent('Tornado Warning')).toBeLessThan(priorityForEvent('Tornado Watch'));
     expect(priorityForEvent('Severe Thunderstorm Warning')).toBeLessThan(
       priorityForEvent('Severe Thunderstorm Watch'),
     );
     expect(priorityForEvent('Bogus Event')).toBe(99);
+  });
+
+  it('ranks Freeze Warning/Watch below Special Weather Statement, Warning above Watch', () => {
+    // Cold-air products are slow-onset; they should never outrank severe
+    // convective products or SPS in the sort. Within the family, Warning
+    // still beats Watch.
+    const sws = priorityForEvent('Special Weather Statement');
+    expect(priorityForEvent('Freeze Warning')).toBeGreaterThan(sws);
+    expect(priorityForEvent('Freeze Watch')).toBeGreaterThan(sws);
+    expect(priorityForEvent('Freeze Warning')).toBeLessThan(priorityForEvent('Freeze Watch'));
   });
 });
 

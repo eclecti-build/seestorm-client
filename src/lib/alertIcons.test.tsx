@@ -5,6 +5,7 @@ import {
   TornadoIcon,
   ThunderstormIcon,
   FloodIcon,
+  FreezeIcon,
   InfoIcon,
   GenericAlertIcon,
 } from './alertIcons';
@@ -23,6 +24,11 @@ describe('iconForEvent()', () => {
     ['Flash Flood Warning', FloodIcon],
     ['Flash Flood Watch', FloodIcon],
     ['Flood Advisory', FloodIcon], // plain Flood routes same as Flash Flood
+    ['Freeze Warning', FreezeIcon],
+    ['Freeze Watch', FreezeIcon],
+    ['Hard Freeze Warning', FreezeIcon], // "Hard Freeze" substring still matches
+    ['Hard Freeze Watch', FreezeIcon],
+    ['Frost Advisory', FreezeIcon], // Frost cousin routes to same glyph
     ['Special Weather Statement', InfoIcon],
     ['Air Quality Alert', GenericAlertIcon], // nothing matches → fallback
     ['', GenericAlertIcon], // empty string → fallback, not crash
@@ -40,6 +46,7 @@ describe('icon components', () => {
     ['TornadoIcon', TornadoIcon],
     ['ThunderstormIcon', ThunderstormIcon],
     ['FloodIcon', FloodIcon],
+    ['FreezeIcon', FreezeIcon],
     ['InfoIcon', InfoIcon],
     ['GenericAlertIcon', GenericAlertIcon],
   ])('%s renders an <svg> with aria-hidden and currentColor stroke', (_name, Icon) => {

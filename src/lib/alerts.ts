@@ -25,6 +25,17 @@ export const WARNING_COLORS: Record<string, string> = {
   'Flash Flood Warning': '#8B0000',
   'Flash Flood Watch': '#2E8B57',
   'Special Weather Statement': '#FFE4B5',
+  // Cold-air products. Inspired by the NWS public hazards palette but nudged
+  // toward cool blues/purples so they read as "cold" next to the warm severe
+  // palette above. Held to Warning + Watch only — matches the 2-per-family
+  // pattern already established for Tornado / Severe Thunderstorm / Flash
+  // Flood, so the legend stays balanced and cold-air products don't visually
+  // dominate despite being low-urgency. Cousins ("Hard Freeze Warning",
+  // "Frost Advisory") intentionally fall back to gray the same way plain
+  // "Flood Warning" does today; the icon still routes them to the snowflake
+  // glyph via substring match, so the family affiliation is still legible.
+  'Freeze Warning': '#483D8B',
+  'Freeze Watch': '#5F9EA0',
 };
 
 export const FALLBACK_COLOR = '#888888';
@@ -37,6 +48,10 @@ export const WARNING_PRIORITY: Record<string, number> = {
   'Severe Thunderstorm Watch': 4,
   'Flash Flood Watch': 5,
   'Special Weather Statement': 6,
+  // Cold-air products rank below SPS — non-life-threatening, slow-onset.
+  // Matches the 2-per-family shape of the severe palette above.
+  'Freeze Warning': 7,
+  'Freeze Watch': 8,
 };
 
 export function colorForEvent(event: string): string {
