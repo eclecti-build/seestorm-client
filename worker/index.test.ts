@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import {
+import worker, {
   listNewestHistoryEntries,
   parsePerStateCode,
   serveGeoSuggestion,
+  type Env,
   type R2BucketListOnly,
 } from './index';
+import { LIVE_CACHE_CONTROL } from './constants';
 // R2ListOptions / R2Object / R2Objects are declared globally by
 // @cloudflare/workers-types. We import the namespace explicitly so this
 // test file stays compilable even if Vitest's tsconfig resolution drifts
@@ -462,5 +464,160 @@ describe('serveGeoSuggestion', () => {
     );
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.state).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /v1/active-events.json — ETag / 304 / Cache-Control contract
+// ---------------------------------------------------------------------------
+//
+// Tests the live-snapshot path end-to-end via `worker.fetch` with a fake
+// R2Bucket. Covers the four conditions called out in Open Decisions #4 for
+// Tier 1 #4c:
+//   1. Happy path — 200 + ETag + SWR Cache-Control
+//   2. Matching If-None-Match — 304 with no body, headers preserved
+//   3. Stale If-None-Match — 200 with new body + new ETag
+//   4. Malformed If-None-Match — 200 body served (no crash)
+//
+// R2's `get(key, { onlyIf: { etagDoesNotMatch } })` is the conditional
+// primitive the Worker uses. When the etag matches, R2 returns a plain
+// `R2Object` (no `body` prop); otherwise it returns an `R2ObjectBody`.
+// The fake below mirrors that distinction faithfully.
+
+interface FakeR2Object {
+  key: string;
+  httpEtag: string;
+  body?: ReadableStream<Uint8Array>;
+  writeHttpMetadata(headers: Headers): void;
+}
+
+interface FakeSnapshotBucket {
+  get(
+    key: string,
+    options?: { onlyIf?: { etagDoesNotMatch?: string } },
+  ): Promise<FakeR2Object | null>;
+}
+
+/**
+ * Build a fake SNAPSHOTS bucket that serves a single object under `key`
+ * with the given `body` and a derived ETag. ETag shape mirrors R2's real
+ * quoted form so the conditional comparison has realistic bytes to match
+ * against — `etag: "abc123"` (with quotes, per HTTP spec).
+ */
+function fakeSnapshotBucket(key: string, body: string, etag: string): FakeSnapshotBucket {
+  const quotedEtag = etag.startsWith('"') ? etag : `"${etag}"`;
+  return {
+    async get(requestedKey, options) {
+      if (requestedKey !== key) return null;
+      const ifMatchesExisting = options?.onlyIf?.etagDoesNotMatch === quotedEtag;
+      const base: FakeR2Object = {
+        key,
+        httpEtag: quotedEtag,
+        writeHttpMetadata(headers: Headers) {
+          headers.set('content-type', 'application/json; charset=utf-8');
+        },
+      };
+      if (ifMatchesExisting) {
+        // Conditional satisfied → R2 returns an R2Object without a body,
+        // which the Worker translates to a 304 Not Modified.
+        return base;
+      }
+      return {
+        ...base,
+        body: new Response(body).body ?? new ReadableStream(),
+      };
+    },
+  };
+}
+
+/** Build a bare `Env` adequate for /v1/* tests — only SNAPSHOTS is read. */
+function envWithSnapshots(snapshots: FakeSnapshotBucket): Env {
+  return {
+    // Worker types on R2Bucket require the full surface, but the live-snapshot
+    // path only exercises `get`. Cast through unknown to satisfy the compiler
+    // without pulling in the rest of the R2Bucket API for a tiny test fake.
+    SNAPSHOTS: snapshots as unknown as R2Bucket,
+    // ASSETS is never invoked for /v1/* requests; stub with a throwing fetcher
+    // so a misrouted test fails loudly instead of silently hitting a static
+    // asset handler.
+    ASSETS: {
+      fetch: () => {
+        throw new Error('ASSETS.fetch should not be called for /v1/* tests');
+      },
+    } as unknown as Fetcher,
+  };
+}
+
+describe('GET /v1/active-events.json — ETag / 304 / SWR contract', () => {
+  const KEY = 'active-events.json';
+  const BODY = JSON.stringify({ features: [], generated_at_ms: 1_700_000_000_000 });
+  const ETAG = '"snapshot-v1-abc"';
+
+  it('returns 200 with ETag + SWR Cache-Control on a cold request (no If-None-Match)', async () => {
+    const env = envWithSnapshots(fakeSnapshotBucket(KEY, BODY, ETAG));
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events.json'),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('etag')).toBe(ETAG);
+    // Audit constant — do not hardcode the literal string here so drift in
+    // constants.ts is caught by the constants tests, not by every route test.
+    expect(res.headers.get('cache-control')).toBe(LIVE_CACHE_CONTROL);
+    // SWR must be present; regressing to plain `max-age=30` would remove the
+    // thundering-herd mitigation the audit calls for.
+    expect(res.headers.get('cache-control')).toMatch(/stale-while-revalidate=30/);
+    const text = await res.text();
+    expect(text).toBe(BODY);
+  });
+
+  it('returns 304 with no body when If-None-Match matches the stored ETag', async () => {
+    const env = envWithSnapshots(fakeSnapshotBucket(KEY, BODY, ETAG));
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events.json', {
+        headers: { 'If-None-Match': ETAG },
+      }),
+      env,
+    );
+    expect(res.status).toBe(304);
+    // 304 MUST preserve ETag + Cache-Control so CF edge revalidation semantics
+    // stay correct on the downstream browser. Stripping either would either
+    // force a full re-GET or break intermediate caches.
+    expect(res.headers.get('etag')).toBe(ETAG);
+    expect(res.headers.get('cache-control')).toBe(LIVE_CACHE_CONTROL);
+    // No body on a 304 — browsers treat any payload here as protocol error.
+    const text = await res.text();
+    expect(text).toBe('');
+  });
+
+  it('returns 200 with fresh body + new ETag when If-None-Match is stale', async () => {
+    const env = envWithSnapshots(fakeSnapshotBucket(KEY, BODY, ETAG));
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events.json', {
+        headers: { 'If-None-Match': '"snapshot-from-yesterday"' },
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('etag')).toBe(ETAG);
+    const text = await res.text();
+    expect(text).toBe(BODY);
+  });
+
+  it('serves 200 body on malformed If-None-Match instead of crashing', async () => {
+    const env = envWithSnapshots(fakeSnapshotBucket(KEY, BODY, ETAG));
+    // Not quoted, not a valid opaque tag — an old or buggy client might send
+    // this shape. The Worker should treat it as a non-match and serve the
+    // current body rather than erroring the request.
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events.json', {
+        headers: { 'If-None-Match': 'not a real etag' },
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('etag')).toBe(ETAG);
+    const text = await res.text();
+    expect(text).toBe(BODY);
   });
 });

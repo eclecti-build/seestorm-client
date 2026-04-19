@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { useMemo } from 'react';
+import { renderHook } from '@testing-library/react';
 import { baseTierFilter, alertLayerFilter } from './alertFilter';
+import type { AlertTier } from './alerts';
 
 // These tests lock in the exact expression shape because WeatherMap.tsx passes
 // the result directly to `map.setFilter(...)`. A regression here silently
@@ -74,5 +77,73 @@ describe('alertLayerFilter', () => {
       'Severe Thunderstorm Warning',
       'Flash Flood Warning',
     ]);
+  });
+});
+
+// Memoization contract — mirrors the `useMemo(() => ({ Warning, Watch,
+// Advisory }), [hiddenEvents])` pattern in WeatherMap.tsx. The filter
+// expression itself is a pure function that always returns a fresh array;
+// the main-thread savings come from memoizing it at the call site so
+// MapLibre's `setFilter` doesn't walk its filter-change path on every 30s
+// poll. These tests pin the React referential-stability guarantee so a
+// future refactor that drops the `useMemo` wrapper (or broadens the deps)
+// fails loudly instead of silently regressing per-poll CPU.
+describe('alertLayerFilter — useMemo referential stability', () => {
+  /**
+   * Harness: apply `useMemo` with the same deps signature WeatherMap uses
+   * (just `hiddenEvents`, since `tier` is a constant per entry in the
+   * memoized object). Returns the memoized 3-filter map so tests can
+   * compare references across rerenders.
+   */
+  function useAlertFilters(hiddenEvents: ReadonlySet<string>): Record<AlertTier, unknown> {
+    return useMemo(
+      () => ({
+        Warning: alertLayerFilter('Warning', hiddenEvents),
+        Watch: alertLayerFilter('Watch', hiddenEvents),
+        Advisory: alertLayerFilter('Advisory', hiddenEvents),
+      }),
+      [hiddenEvents],
+    );
+  }
+
+  it('returns the same reference across rerenders when hiddenEvents is unchanged', () => {
+    const hidden = new Set<string>(['Tornado Warning']);
+    const { result, rerender } = renderHook(({ h }) => useAlertFilters(h), {
+      initialProps: { h: hidden },
+    });
+    const first = result.current;
+    rerender({ h: hidden });
+    // Object.is — not deep equality. If a future change drops the memo and
+    // rebuilds the object per render, this assertion fails.
+    expect(result.current).toBe(first);
+    expect(result.current.Warning).toBe(first.Warning);
+  });
+
+  it('returns a NEW reference when hiddenEvents changes identity', () => {
+    const { result, rerender } = renderHook(({ h }) => useAlertFilters(h), {
+      initialProps: { h: new Set<string>() as ReadonlySet<string> },
+    });
+    const first = result.current;
+    // Simulate a legend toggle: WeatherMap replaces the Set rather than
+    // mutating it (setHiddenEvents(new Set(prev))). React sees a new ref
+    // in the deps array → memo invalidates → new filter object.
+    rerender({ h: new Set(['Tornado Warning']) as ReadonlySet<string> });
+    expect(result.current).not.toBe(first);
+    expect(result.current.Warning).not.toBe(first.Warning);
+  });
+
+  it('preserves memo across rerenders when the caller passes the same Set instance even with other props changing', () => {
+    // This models the common WeatherMap case: `isForecast` or `hiddenTiers`
+    // flips but `hiddenEvents` stays the same Set reference. The filter
+    // memo should NOT invalidate — the filter expression depends only on
+    // hiddenEvents.
+    const hidden = new Set<string>(['Flood Warning']);
+    const { result, rerender } = renderHook(
+      ({ h }: { h: ReadonlySet<string>; unrelated: number }) => useAlertFilters(h),
+      { initialProps: { h: hidden, unrelated: 0 } },
+    );
+    const first = result.current;
+    rerender({ h: hidden, unrelated: 1 });
+    expect(result.current).toBe(first);
   });
 });

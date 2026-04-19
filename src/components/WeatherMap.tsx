@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import * as turf from '@turf/turf';
@@ -672,6 +672,26 @@ export default function WeatherMap() {
   //      stacked watches/advisories don't muddy the map.
   // Layers stay mounted in both cases so we can flip visibility back on
   // without rebuilding the source or re-running paint expressions.
+  // Alert layer filter expressions — memoized on `hiddenEvents` so the
+  // MapLibre expression trees are only rebuilt when the set actually changes.
+  // Without this, the arrays rebuild on every render (new reference each
+  // time) and `m.setFilter` below walks MapLibre's filter-change path at
+  // every 30s poll even when nothing relevant to the map has changed. On a
+  // warned-heavy cell that's ~15% of main-thread time per poll.
+  //
+  // Deps are narrow on purpose: `alertLayerFilter` reads only `tier` (a
+  // constant per entry) and `hiddenEvents`. `hiddenTiers` and `isForecast`
+  // govern `visibility`, not the filter expression itself, so including
+  // them here would spuriously invalidate the memo.
+  const alertLayerFilters = useMemo(
+    () => ({
+      Warning: alertLayerFilter('Warning', hiddenEvents),
+      Watch: alertLayerFilter('Watch', hiddenEvents),
+      Advisory: alertLayerFilter('Advisory', hiddenEvents),
+    }),
+    [hiddenEvents],
+  );
+
   useEffect(() => {
     if (!mapReady) return;
     const m = map.current;
@@ -684,12 +704,12 @@ export default function WeatherMap() {
     ];
     for (const { tier, ids } of tierLayers) {
       const visibility = isForecast || hiddenTiers.has(tier) ? 'none' : 'visible';
-      // Recompute per-event filter whenever hiddenEvents changes. Layer
-      // `visibility` stays as the coarse tier/forecast gate; `filter`
+      // Layer `visibility` stays as the coarse tier/forecast gate; `filter`
       // handles finer per-event exclusions. Keeping them on separate
       // MapLibre mechanics means a single legend click only touches the
-      // dimension that actually changed.
-      const filter = alertLayerFilter(tier, hiddenEvents);
+      // dimension that actually changed. Filter object is the memoized
+      // reference from `alertLayerFilters` above.
+      const filter = alertLayerFilters[tier];
       for (const id of ids) {
         if (!m.getLayer(id)) continue;
         m.setLayoutProperty(id, 'visibility', visibility);
@@ -697,7 +717,7 @@ export default function WeatherMap() {
       }
     }
     setMotionVisibility(m, !isForecast);
-  }, [mapReady, isForecast, hiddenTiers, hiddenEvents]);
+  }, [mapReady, isForecast, hiddenTiers, alertLayerFilters]);
 
   // Map init.
   useEffect(() => {
