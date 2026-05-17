@@ -835,6 +835,26 @@ export default function WeatherMap() {
         m.setFilter(id, filter);
       }
     }
+    // Confirmed-tornado emphasis tracks the Warning tier gate (a Tornado
+    // Warning is a Warning): it must vanish in forecast mode and when the
+    // user hides Warnings, so a pulsing "TAKE COVER" ring is never
+    // stranded over a model frame or a hidden tier. Filter = confirmed
+    // AND the Warning event filter, so a per-event hide of "Tornado
+    // Warning" (via hiddenEvents) drops the pulse too. alertLayerFilter
+    // returns a modern expression tree, so nesting it under `all` is safe.
+    const tornadoConfirmedVisibility =
+      isForecast || hiddenTiers.has('Warning') ? 'none' : 'visible';
+    const tornadoConfirmedFilter = [
+      'all',
+      ['==', ['get', 'tornadoConfirmed'], true],
+      alertLayerFilters.Warning,
+    ] as unknown as maplibregl.FilterSpecification;
+    for (const id of ['tornado-confirmed-pulse', 'tornado-confirmed-label']) {
+      if (!m.getLayer(id)) continue;
+      m.setLayoutProperty(id, 'visibility', tornadoConfirmedVisibility);
+      m.setFilter(id, tornadoConfirmedFilter);
+    }
+
     setMotionVisibility(m, !isForecast);
   }, [mapReady, isForecast, hiddenTiers, alertLayerFilters]);
 
@@ -844,7 +864,7 @@ export default function WeatherMap() {
 
     // Basemap style: defaults to CartoDB Dark Matter (free, no-key, works from any
     // origin, and matches the dark SeeStorm theme). Override via NEXT_PUBLIC_MAP_STYLE_URL
-    // when self-hosting Protomaps on R2 or using a keyed Stadia Maps style.
+    // when self-hosting Protomaps on R2 or using another MapLibre-compatible style.
     const mapStyle =
       process.env.NEXT_PUBLIC_MAP_STYLE_URL ||
       'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -1270,6 +1290,58 @@ export default function WeatherMap() {
       });
 
       // ---------------------------------------------------------------------
+      // Confirmed-tornado emphasis (ADDITIVE — does not modify the existing
+      // alert fill/outline paint, per SPIKES.md). A bright pulsing ring plus
+      // an on-map call-to-action, gated on the flat `tornadoConfirmed`
+      // feature property. Radar-indicated tornadoes are deliberately left
+      // un-pulsed so the animation itself carries the "confirmed on the
+      // ground vs. not" meaning. No fill layer is added, so interior clicks
+      // still fall through to `alert-fills-warning` and the popup is
+      // unaffected.
+      // ---------------------------------------------------------------------
+      const confirmedTornadoFilter = [
+        '==',
+        ['get', 'tornadoConfirmed'],
+        true,
+      ] as unknown as maplibregl.FilterSpecification;
+
+      m.addLayer({
+        id: 'tornado-confirmed-pulse',
+        type: 'line',
+        source: 'alerts',
+        filter: confirmedTornadoFilter,
+        paint: {
+          'line-color': '#ff2d2d',
+          'line-width': 3.5,
+          // Initial value; the pulse effect animates this when motion is
+          // allowed, or pins it static under prefers-reduced-motion.
+          'line-opacity': 1,
+        },
+      });
+
+      m.addLayer({
+        id: 'tornado-confirmed-label',
+        type: 'symbol',
+        source: 'alerts',
+        filter: confirmedTornadoFilter,
+        layout: {
+          'text-field': ['get', 'tornadoAnnotation'],
+          // 'Open Sans Semibold' is already used by the storm-motion label
+          // layer, so the basemap glyph stack is known to ship it.
+          'text-font': ['Open Sans Semibold'],
+          'text-size': 13,
+          'text-allow-overlap': true,
+          'text-letter-spacing': 0.04,
+          'text-max-width': 12,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#7f1d1d',
+          'text-halo-width': 2,
+        },
+      });
+
+      // ---------------------------------------------------------------------
       // Storm motion layers
       // ---------------------------------------------------------------------
       //
@@ -1431,6 +1503,49 @@ export default function WeatherMap() {
     };
   }, []);
 
+  // Pulse the confirmed-tornado ring. The codebase has no animation-loop
+  // helper (radar uses native opacity crossfade), so this is a small,
+  // self-contained rAF loop with strict teardown. It is a gentle sine ease,
+  // deliberately NOT a hard strobe — a strobing polygon in a public-safety
+  // app is a photosensitivity hazard. Honors prefers-reduced-motion by
+  // pinning a static high-emphasis opacity instead of animating.
+  useEffect(() => {
+    if (!mapReady) return;
+    const LAYER = 'tornado-confirmed-pulse';
+    const setOpacity = (v: number) => {
+      const m = map.current;
+      if (!m || !m.getLayer(LAYER)) return;
+      try {
+        m.setPaintProperty(LAYER, 'line-opacity', v);
+      } catch {
+        // Style reloaded between frames — the next frame retries safely.
+      }
+    };
+
+    const reduce =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      setOpacity(0.95);
+      return;
+    }
+
+    const MIN = 0.2;
+    const MAX = 1;
+    const PERIOD_MS = 1100;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const phase = ((now - start) % PERIOD_MS) / PERIOD_MS; // 0..1
+      const eased = (1 - Math.cos(phase * 2 * Math.PI)) / 2; // 0..1..0
+      setOpacity(MIN + (MAX - MIN) * eased);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [mapReady]);
+
   // Tick `now` every 30s so the "Xm ago" label advances without a full re-fetch.
   // Reads `serverNow()` instead of `Date.now()` so a clock-skewed user sees
   // labels anchored to the server's authoritative time (swarm audit 2026-04-18,
@@ -1589,7 +1704,7 @@ export default function WeatherMap() {
                   color: colorForEvent(selectedAlert.properties.event),
                 }}
               >
-                {selectedAlert.properties.event}
+                {selectedAlert.properties.tornadoLabel ?? selectedAlert.properties.event}
               </div>
               <div className="text-sm font-semibold mb-2">{selectedAlert.properties.headline}</div>
               <div className="text-xs text-gray-300 mb-2">{selectedAreaDesc}</div>

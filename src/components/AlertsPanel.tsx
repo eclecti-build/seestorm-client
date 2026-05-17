@@ -100,7 +100,7 @@ function AlertCard({
           style={{ color }}
         />
         <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color }}>
-          {alert.properties.event}
+          {alert.properties.tornadoLabel ?? alert.properties.event}
         </span>
         <span className="ml-auto text-[10px] text-gray-400">{tier}</span>
       </div>

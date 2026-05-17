@@ -59,3 +59,9 @@ next-env.d.ts
 # public/data/zip-greatlakes.json. Not needed at runtime or in CI.
 /tmp/
 .claude/sessions/
+
+# Local validation fixtures. In production `/v1/*` is served by the Worker
+# from R2 — `public/v1/` is never a committed asset path. Ignoring it makes
+# the local detection-validation snapshot impossible to commit/deploy by
+# accident while still letting `next dev` serve it from public/.
+/public/v1/
