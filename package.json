@@ -15,7 +15,7 @@
     "email": "sean@eclecti-build.com"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 6006",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
