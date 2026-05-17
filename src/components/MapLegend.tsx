@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { WARNING_COLORS, tierForEvent, type AlertTier } from '@/lib/alerts';
 import { AlertIcon } from '@/lib/alertIcons';
+import { TORNADO_CATEGORY_COLOR, type TornadoCategory } from '@/lib/tornado';
 
 // Tier glyphs communicate the polygon treatment on the map at a glance.
 // Keep them tiny — they sit next to a 14×14 color swatch inside a cramped
@@ -67,6 +68,34 @@ function MotionGlyph() {
   );
 }
 
+function TornadoStatusGlyph({ color, pulse }: { color: string; pulse?: boolean }) {
+  return (
+    <svg width={34} height={14} viewBox="0 0 34 14" aria-hidden="true">
+      {pulse && (
+        <rect
+          x={1}
+          y={1}
+          width={32}
+          height={12}
+          fill="none"
+          stroke={color}
+          strokeWidth={1}
+          opacity={0.35}
+        />
+      )}
+      <rect
+        x={pulse ? 5 : 3}
+        y={pulse ? 3 : 2}
+        width={pulse ? 24 : 28}
+        height={pulse ? 8 : 10}
+        fill="none"
+        stroke={color}
+        strokeWidth={2.5}
+      />
+    </svg>
+  );
+}
+
 // Tier rows in the legend double as map-filter toggles. Clicking a tier
 // hides every alert polygon in that tier from the map (the side panel
 // keeps showing them so situational awareness isn't lost). Kept to three
@@ -92,6 +121,37 @@ const TIER_DESCRIPTIONS: ReadonlyArray<{ tier: AlertTier; color: string; label: 
     tier: 'Advisory',
     color: WARNING_COLORS['Special Weather Statement'],
     label: 'Advisory — monitor',
+  },
+];
+
+const TORNADO_STATUS_DESCRIPTIONS: ReadonlyArray<{
+  category: TornadoCategory;
+  label: string;
+  description: string;
+  pulse?: boolean;
+}> = [
+  {
+    category: 'RADAR_INDICATED',
+    label: 'Radar indicated',
+    description: 'Rotation detected; tornado not confirmed',
+  },
+  {
+    category: 'CONFIRMED',
+    label: 'Confirmed',
+    description: 'Verified tornado; take cover',
+    pulse: true,
+  },
+  {
+    category: 'PDS',
+    label: 'Particularly dangerous',
+    description: 'Confirmed strong tornado',
+    pulse: true,
+  },
+  {
+    category: 'EMERGENCY',
+    label: 'Tornado emergency',
+    description: 'Confirmed violent tornado',
+    pulse: true,
   },
 ];
 
@@ -123,7 +183,7 @@ export default function MapLegend({
     // reading width for the tier/event rows.
     <div
       className={`bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 text-xs overflow-hidden max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] ${
-        open ? 'w-72' : 'w-fit'
+        open ? 'w-72 max-h-full min-h-0 shrink flex flex-col' : 'w-fit shrink-0'
       }`}
       role="region"
       aria-label="Map legend"
@@ -142,7 +202,10 @@ export default function MapLegend({
       </button>
 
       {open && (
-        <div id="map-legend-body" className="px-3 pb-3 space-y-3">
+        <div
+          id="map-legend-body"
+          className="min-h-0 overflow-y-auto overscroll-contain px-3 pb-3 space-y-3"
+        >
           <ul className="space-y-1.5">
             {entries.map(([event, color]) => {
               const tier = tierForEvent(event);
@@ -243,6 +306,21 @@ export default function MapLegend({
                 </button>
               );
             })}
+          </div>
+
+          <div className="pt-2 border-t border-gray-700 space-y-1">
+            <div className="text-[10px] uppercase tracking-wide text-gray-400">Tornado status</div>
+            <ul className="grid grid-cols-2 gap-x-2 gap-y-1.5">
+              {TORNADO_STATUS_DESCRIPTIONS.map(({ category, label, description, pulse }) => (
+                <li key={category} className="flex items-start gap-1.5">
+                  <TornadoStatusGlyph color={TORNADO_CATEGORY_COLOR[category]} pulse={pulse} />
+                  <div className="min-w-0">
+                    <div className="text-gray-100 leading-tight">{label}</div>
+                    <div className="text-[9px] leading-tight text-gray-400">{description}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
           </div>
 
           <div className="pt-2 border-t border-gray-700 space-y-1">

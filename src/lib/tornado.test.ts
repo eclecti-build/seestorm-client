@@ -83,10 +83,10 @@ describe('tornadoLabel — single normalized label, never a compound', () => {
   it('falls back to the bare event when no detection', () => {
     expect(tornadoLabel('Tornado Warning', null)).toBe('Tornado Warning');
   });
-  it('uses "Confirmed" (never "Observed") and the real NWS product names', () => {
+  it('uses "Confirmed" (never "Observed") and expands the dangerous-situation level', () => {
     expect(tornadoLabel('Tornado Warning', radar)).toBe('Tornado Warning — Radar Indicated');
     expect(tornadoLabel('Tornado Warning', confirmed)).toBe('Tornado Warning — Confirmed');
-    expect(tornadoLabel('Tornado Warning', pds)).toBe('PDS Tornado Warning');
+    expect(tornadoLabel('Tornado Warning', pds)).toBe('Particularly Dangerous Tornado Warning');
     expect(tornadoLabel('Tornado Warning', emergency)).toBe('Tornado Emergency');
   });
   it('never emits a compound like "PDS (Observed)"', () => {
@@ -113,7 +113,7 @@ describe('tornadoMapAnnotation — consistent CTA verb', () => {
   });
   it('escalates with one consistent verb (TAKE COVER), no observed/confirmed drift', () => {
     expect(tornadoMapAnnotation(confirmed)).toBe('CONFIRMED TORNADO — TAKE COVER');
-    expect(tornadoMapAnnotation(pds)).toBe('PDS — TAKE COVER NOW');
+    expect(tornadoMapAnnotation(pds)).toBe('PARTICULARLY DANGEROUS — TAKE COVER NOW');
     expect(tornadoMapAnnotation(emergency)).toBe('TORNADO EMERGENCY — TAKE COVER NOW');
   });
 });

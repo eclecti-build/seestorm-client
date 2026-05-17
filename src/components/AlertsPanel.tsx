@@ -260,7 +260,9 @@ export default function AlertsPanel({
   return (
     <div
       className={`bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 p-2 max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] ${
-        isCollapsed ? 'w-fit' : 'w-80 ss-alerts-maxh overflow-y-auto space-y-2'
+        isCollapsed
+          ? 'w-fit shrink-0'
+          : 'w-80 min-h-0 shrink ss-alerts-maxh overflow-y-auto space-y-2'
       }`}
       role="region"
       aria-label="Active alerts"

@@ -860,7 +860,11 @@ export default function WeatherMap() {
       m.setLayoutProperty('tornado-cat-outline', 'visibility', tornadoVisibility);
       m.setFilter('tornado-cat-outline', tornadoPresentVisFilter);
     }
-    for (const id of ['tornado-confirmed-pulse', 'tornado-confirmed-label']) {
+    for (const id of [
+      'tornado-confirmed-halo',
+      'tornado-confirmed-pulse',
+      'tornado-confirmed-label',
+    ]) {
       if (!m.getLayer(id)) continue;
       m.setLayoutProperty(id, 'visibility', tornadoVisibility);
       m.setFilter(id, tornadoConfirmedFilter);
@@ -1337,8 +1341,31 @@ export default function WeatherMap() {
         filter: tornadoPresentFilter,
         paint: {
           'line-color': tornadoColorExpr,
-          'line-width': 2.5,
+          'line-width': 3.25,
           'line-opacity': 0.95,
+        },
+      });
+
+      m.addLayer({
+        id: 'tornado-confirmed-halo',
+        type: 'line',
+        source: 'alerts',
+        filter: confirmedTornadoFilter,
+        paint: {
+          // Persistent wide band: gives confirmed tornado warnings an
+          // immediately visible footprint even between pulse peaks.
+          'line-color': tornadoColorExpr,
+          'line-width': [
+            'match',
+            ['get', 'tornadoCategory'],
+            'EMERGENCY',
+            12,
+            'PDS',
+            10,
+            8,
+          ] as unknown as maplibregl.ExpressionSpecification,
+          'line-opacity': 0.32,
+          'line-blur': 0.5,
         },
       });
 
@@ -1356,10 +1383,10 @@ export default function WeatherMap() {
             'match',
             ['get', 'tornadoCategory'],
             'EMERGENCY',
-            6,
+            10,
             'PDS',
-            5,
-            4,
+            8.5,
+            7,
           ] as unknown as maplibregl.ExpressionSpecification,
           // Initial value; the pulse effect animates this when motion is
           // allowed, or pins it static under prefers-reduced-motion.
@@ -1377,8 +1404,21 @@ export default function WeatherMap() {
           // 'Open Sans Semibold' is already used by the storm-motion label
           // layer, so the basemap glyph stack is known to ship it.
           'text-font': ['Open Sans Semibold'],
-          'text-size': 13,
-          'text-allow-overlap': true,
+          // At regional/state zoom, the halo/pulse carries the signal and
+          // text would obscure the warning footprint. Fade the CTA in only
+          // once there is enough map scale to read it without billboarding.
+          'text-size': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            6.5,
+            10,
+            8,
+            13,
+            10,
+            14,
+          ] as unknown as maplibregl.ExpressionSpecification,
+          'text-allow-overlap': false,
           'text-letter-spacing': 0.04,
           'text-max-width': 12,
         },
@@ -1386,6 +1426,15 @@ export default function WeatherMap() {
           'text-color': '#ffffff',
           'text-halo-color': '#7f1d1d',
           'text-halo-width': 2,
+          'text-opacity': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            6.25,
+            0,
+            7.25,
+            1,
+          ] as unknown as maplibregl.ExpressionSpecification,
         },
       });
 
@@ -1583,9 +1632,9 @@ export default function WeatherMap() {
       }
     };
 
-    const MIN = 0.2;
+    const MIN = 0.45;
     const MAX = 1;
-    const PERIOD_MS = 1100;
+    const PERIOD_MS = 950;
     let raf = 0;
     const startLoop = () => {
       const start = performance.now();
@@ -1703,7 +1752,7 @@ export default function WeatherMap() {
           bottom-left positioning of the legend caused the two to drift
           out of visual relationship as the chip grew). All three respect
           the same safe-area insets on notched devices. */}
-      <div className="absolute top-[calc(4rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] flex flex-col gap-2 items-start">
+      <div className="absolute top-[calc(4rem+env(safe-area-inset-top))] bottom-[calc(1rem+env(safe-area-inset-bottom))] left-[calc(1rem+env(safe-area-inset-left))] max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] min-h-0 flex flex-col gap-2 items-start overflow-hidden">
         {/* Active alerts list — surfaces every alert (polygon + zone-only).
             Critical for Watches and other zone-aggregate products that have
             no geometry and therefore don't appear on the map. Clicking a card

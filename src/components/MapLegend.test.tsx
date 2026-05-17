@@ -54,12 +54,17 @@ describe('<MapLegend />', () => {
     expect(screen.queryByText('Tornado Warning')).not.toBeInTheDocument();
   });
 
-  it('shows the tier key and storm-motion explainer when expanded', () => {
+  it('shows the tier key, tornado-status key, and storm-motion explainer when expanded', () => {
     renderLegend();
     fireEvent.click(screen.getByRole('button', { name: /^legend$/i }));
     expect(screen.getByText(/warning — take action/i)).toBeInTheDocument();
     expect(screen.getByText(/watch — be aware/i)).toBeInTheDocument();
     expect(screen.getByText(/advisory — monitor/i)).toBeInTheDocument();
+    expect(screen.getByText(/tornado status/i)).toBeInTheDocument();
+    expect(screen.getByText(/radar indicated/i)).toBeInTheDocument();
+    expect(screen.getByText(/tornado not confirmed/i)).toBeInTheDocument();
+    expect(screen.getByText(/particularly dangerous/i)).toBeInTheDocument();
+    expect(screen.getByText(/confirmed strong tornado/i)).toBeInTheDocument();
     expect(screen.getByText(/projected path/i)).toBeInTheDocument();
   });
 
@@ -180,11 +185,14 @@ describe('<MapLegend />', () => {
     });
 
     it('expanded legend uses a fixed w-72 width', () => {
-      renderLegend();
+      const { container } = renderLegend();
       fireEvent.click(screen.getByRole('button', { name: /^legend$/i }));
       const region = screen.getByRole('region', { name: /map legend/i });
       expect(region).toHaveClass('w-72');
+      expect(region).toHaveClass('max-h-full', 'min-h-0', 'shrink', 'flex', 'flex-col');
       expect(region).not.toHaveClass('w-fit');
+      const body = container.querySelector('#map-legend-body');
+      expect(body).toHaveClass('min-h-0', 'overflow-y-auto', 'overscroll-contain');
     });
   });
 });

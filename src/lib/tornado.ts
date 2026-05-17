@@ -66,7 +66,7 @@ export function tornadoCategory(d: TornadoDetection): TornadoCategory {
 
 // Hue-shift-to-magenta ramp (locked). Differentiation ascends the ladder;
 // Tornado Emergency = magenta, matching the RadarScope/NWS convention.
-const CATEGORY_COLOR: Record<TornadoCategory, string> = {
+export const TORNADO_CATEGORY_COLOR: Record<TornadoCategory, string> = {
   RADAR_INDICATED: '#FF8C42', // orange-red — "not confirmed yet"
   CONFIRMED: '#FF1A1A', // red — confirmed on the ground
   PDS: '#B5002E', // deep crimson — particularly dangerous
@@ -74,7 +74,7 @@ const CATEGORY_COLOR: Record<TornadoCategory, string> = {
 };
 
 export function tornadoColor(d: TornadoDetection): string {
-  return CATEGORY_COLOR[tornadoCategory(d)];
+  return TORNADO_CATEGORY_COLOR[tornadoCategory(d)];
 }
 
 /**
@@ -90,7 +90,7 @@ export function tornadoLabel(baseEvent: string, d: TornadoDetection | null): str
     case 'CONFIRMED':
       return `${baseEvent} — Confirmed`;
     case 'PDS':
-      return 'PDS Tornado Warning';
+      return 'Particularly Dangerous Tornado Warning';
     case 'EMERGENCY':
       return 'Tornado Emergency';
   }
@@ -108,7 +108,7 @@ export function tornadoLabelTitle(d: TornadoDetection | null): string | undefine
     case 'CONFIRMED':
       return 'Confirmed tornado — spotter, law enforcement, or radar debris signature';
     case 'PDS':
-      return 'Particularly Dangerous Situation — a confirmed strong tornado';
+      return 'Particularly Dangerous Situation (PDS) — confirmed strong tornado';
     case 'EMERGENCY':
       return 'Tornado Emergency — confirmed violent tornado, catastrophic threat to life';
   }
@@ -126,7 +126,7 @@ export function tornadoMapAnnotation(d: TornadoDetection | null): string {
     case 'EMERGENCY':
       return 'TORNADO EMERGENCY — TAKE COVER NOW';
     case 'PDS':
-      return 'PDS — TAKE COVER NOW';
+      return 'PARTICULARLY DANGEROUS — TAKE COVER NOW';
     default:
       return 'CONFIRMED TORNADO — TAKE COVER';
   }
