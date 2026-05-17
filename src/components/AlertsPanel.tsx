@@ -61,7 +61,9 @@ function AlertCard({
   now: number;
   userState?: string;
 }) {
-  const color = colorForEvent(alert.properties.event);
+  // Tornado alerts use the normalized category color (magenta ramp); all
+  // other events fall back to the standard per-event palette.
+  const color = alert.properties.tornadoColor ?? colorForEvent(alert.properties.event);
   const tier = tierForEvent(alert.properties.event);
   const url = alert.properties.url;
 
@@ -99,7 +101,11 @@ function AlertCard({
           className="shrink-0"
           style={{ color }}
         />
-        <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color }}>
+        <span
+          className="text-[11px] font-bold uppercase tracking-wide"
+          style={{ color }}
+          title={alert.properties.tornadoLabelTitle}
+        >
           {alert.properties.tornadoLabel ?? alert.properties.event}
         </span>
         <span className="ml-auto text-[10px] text-gray-400">{tier}</span>

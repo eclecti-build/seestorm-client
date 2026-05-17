@@ -842,16 +842,27 @@ export default function WeatherMap() {
     // AND the Warning event filter, so a per-event hide of "Tornado
     // Warning" (via hiddenEvents) drops the pulse too. alertLayerFilter
     // returns a modern expression tree, so nesting it under `all` is safe.
-    const tornadoConfirmedVisibility =
-      isForecast || hiddenTiers.has('Warning') ? 'none' : 'visible';
+    const tornadoVisibility = isForecast || hiddenTiers.has('Warning') ? 'none' : 'visible';
     const tornadoConfirmedFilter = [
       'all',
       ['==', ['get', 'tornadoConfirmed'], true],
       alertLayerFilters.Warning,
     ] as unknown as maplibregl.FilterSpecification;
+    // Category outline covers ALL tornado polygons (incl. radar-indicated),
+    // still AND-gated to the Warning event filter so a per-event hide drops
+    // it too.
+    const tornadoPresentVisFilter = [
+      'all',
+      ['has', 'tornadoColor'],
+      alertLayerFilters.Warning,
+    ] as unknown as maplibregl.FilterSpecification;
+    if (m.getLayer('tornado-cat-outline')) {
+      m.setLayoutProperty('tornado-cat-outline', 'visibility', tornadoVisibility);
+      m.setFilter('tornado-cat-outline', tornadoPresentVisFilter);
+    }
     for (const id of ['tornado-confirmed-pulse', 'tornado-confirmed-label']) {
       if (!m.getLayer(id)) continue;
-      m.setLayoutProperty(id, 'visibility', tornadoConfirmedVisibility);
+      m.setLayoutProperty(id, 'visibility', tornadoVisibility);
       m.setFilter(id, tornadoConfirmedFilter);
     }
 
@@ -1304,6 +1315,32 @@ export default function WeatherMap() {
         ['get', 'tornadoConfirmed'],
         true,
       ] as unknown as maplibregl.FilterSpecification;
+      const tornadoColorExpr = [
+        'get',
+        'tornadoColor',
+      ] as unknown as maplibregl.ExpressionSpecification;
+
+      // Every tornado polygon — including radar-indicated — gets a
+      // category-COLORED border on this parallel layer. The shared
+      // event-color expression on alert-outlines-warning is left untouched
+      // (SPIKES.md): this is how the four-level magenta ramp reaches the
+      // map without editing existing alert paint. Filter is "has a tornado
+      // category" so non-tornado alerts are unaffected.
+      const tornadoPresentFilter = [
+        'has',
+        'tornadoColor',
+      ] as unknown as maplibregl.FilterSpecification;
+      m.addLayer({
+        id: 'tornado-cat-outline',
+        type: 'line',
+        source: 'alerts',
+        filter: tornadoPresentFilter,
+        paint: {
+          'line-color': tornadoColorExpr,
+          'line-width': 2.5,
+          'line-opacity': 0.95,
+        },
+      });
 
       m.addLayer({
         id: 'tornado-confirmed-pulse',
@@ -1311,8 +1348,19 @@ export default function WeatherMap() {
         source: 'alerts',
         filter: confirmedTornadoFilter,
         paint: {
-          'line-color': '#ff2d2d',
-          'line-width': 3.5,
+          // Pulse rendered in the category color; radar-indicated never
+          // reaches this layer (confirmed-only filter) so the static
+          // cat-outline above is its sole, un-pulsed treatment.
+          'line-color': tornadoColorExpr,
+          'line-width': [
+            'match',
+            ['get', 'tornadoCategory'],
+            'EMERGENCY',
+            6,
+            'PDS',
+            5,
+            4,
+          ] as unknown as maplibregl.ExpressionSpecification,
           // Initial value; the pulse effect animates this when motion is
           // allowed, or pins it static under prefers-reduced-motion.
           'line-opacity': 1,
@@ -1701,8 +1749,11 @@ export default function WeatherMap() {
               <div
                 className="text-xs font-bold uppercase tracking-wide mb-1"
                 style={{
-                  color: colorForEvent(selectedAlert.properties.event),
+                  color:
+                    selectedAlert.properties.tornadoColor ??
+                    colorForEvent(selectedAlert.properties.event),
                 }}
+                title={selectedAlert.properties.tornadoLabelTitle}
               >
                 {selectedAlert.properties.tornadoLabel ?? selectedAlert.properties.event}
               </div>

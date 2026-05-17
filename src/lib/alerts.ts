@@ -162,10 +162,12 @@ export function resolveAlertUrl(params: {
 import type { StormMotion } from './stormMotion';
 import {
   type TornadoDetection,
-  type TornadoTier,
+  type TornadoCategory,
   asTornadoDetection,
-  tornadoTier,
-  tornadoEventLabel,
+  tornadoCategory,
+  tornadoColor,
+  tornadoLabel,
+  tornadoLabelTitle,
   tornadoMapAnnotation,
 } from './tornado';
 import { synthesizeGeometryFromAreaDesc, type CountyLookup } from './countyGeometry';
@@ -319,9 +321,14 @@ export interface WeatherAlertProperties {
    */
   tornado?: TornadoDetection | null;
   tornadoConfirmed?: boolean;
-  tornadoTier?: TornadoTier;
-  /** Pre-rendered display label, e.g. "Tornado Warning (Observed)". */
+  /** Normalized single category — the stateful ladder, not a compound. */
+  tornadoCategory?: TornadoCategory;
+  /** Category color (magenta-ramp); drives label + parallel map layers. */
+  tornadoColor?: string;
+  /** Pre-rendered single label, e.g. "Tornado Warning — Confirmed". */
   tornadoLabel?: string;
+  /** Spelled-out tooltip for the label (e.g. PDS expansion). */
+  tornadoLabelTitle?: string;
   /** On-map call-to-action; only set when confirmed. */
   tornadoAnnotation?: string;
 }
@@ -384,8 +391,10 @@ function tornadoProps(
   return {
     tornado: d,
     tornadoConfirmed: d.confirmed,
-    tornadoTier: tornadoTier(d),
-    tornadoLabel: tornadoEventLabel(eventType, d),
+    tornadoCategory: tornadoCategory(d),
+    tornadoColor: tornadoColor(d),
+    tornadoLabel: tornadoLabel(eventType, d),
+    tornadoLabelTitle: tornadoLabelTitle(d) ?? undefined,
     tornadoAnnotation: tornadoMapAnnotation(d) || undefined,
   };
 }
