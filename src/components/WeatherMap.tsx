@@ -1551,14 +1551,27 @@ export default function WeatherMap() {
     };
   }, []);
 
-  // Pulse the confirmed-tornado ring. The codebase has no animation-loop
-  // helper (radar uses native opacity crossfade), so this is a small,
-  // self-contained rAF loop with strict teardown. It is a gentle sine ease,
-  // deliberately NOT a hard strobe — a strobing polygon in a public-safety
-  // app is a photosensitivity hazard. Honors prefers-reduced-motion by
-  // pinning a static high-emphasis opacity instead of animating.
+  // True only when at least one rendered alert is a confirmed tornado.
+  // Gates the pulse loop off the common (clear-weather) path entirely.
+  const hasConfirmedTornado = useMemo(
+    () => allAlerts.some((a) => a.properties.tornadoConfirmed === true),
+    [allAlerts],
+  );
+
+  // Pulse the confirmed-tornado ring. Self-contained rAF loop with strict
+  // teardown; gentle sine ease (deliberately NOT a strobe — a strobing
+  // polygon in a public-safety app is a photosensitivity hazard).
+  //
+  // The loop is gated so it does NOT run on the overwhelmingly common
+  // path: it starts only when a confirmed tornado is actually present AND
+  // the layer is visible (not forecast mode, Warnings not hidden). A
+  // clear-weather session must not burn ~60fps setPaintProperty for zero
+  // features. prefers-reduced-motion pins a static high-emphasis opacity
+  // and is re-evaluated live if the OS setting is toggled mid-session.
   useEffect(() => {
     if (!mapReady) return;
+    if (!hasConfirmedTornado || isForecast || hiddenTiers.has('Warning')) return;
+
     const LAYER = 'tornado-confirmed-pulse';
     const setOpacity = (v: number) => {
       const m = map.current;
@@ -1570,29 +1583,44 @@ export default function WeatherMap() {
       }
     };
 
-    const reduce =
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce) {
-      setOpacity(0.95);
-      return;
-    }
-
     const MIN = 0.2;
     const MAX = 1;
     const PERIOD_MS = 1100;
-    const start = performance.now();
     let raf = 0;
-    const tick = (now: number) => {
-      const phase = ((now - start) % PERIOD_MS) / PERIOD_MS; // 0..1
-      const eased = (1 - Math.cos(phase * 2 * Math.PI)) / 2; // 0..1..0
-      setOpacity(MIN + (MAX - MIN) * eased);
+    const startLoop = () => {
+      const start = performance.now();
+      const tick = (now: number) => {
+        const phase = ((now - start) % PERIOD_MS) / PERIOD_MS; // 0..1
+        const eased = (1 - Math.cos(phase * 2 * Math.PI)) / 2; // 0..1..0
+        setOpacity(MIN + (MAX - MIN) * eased);
+        raf = requestAnimationFrame(tick);
+      };
       raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [mapReady]);
+    const stopLoop = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+    };
+
+    const mql =
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null;
+    const apply = () => {
+      stopLoop();
+      if (mql?.matches) {
+        setOpacity(0.95); // static high-emphasis — no animation
+      } else {
+        startLoop();
+      }
+    };
+    apply();
+    mql?.addEventListener('change', apply);
+    return () => {
+      stopLoop();
+      mql?.removeEventListener('change', apply);
+    };
+  }, [mapReady, hasConfirmedTornado, isForecast, hiddenTiers]);
 
   // Tick `now` every 30s so the "Xm ago" label advances without a full re-fetch.
   // Reads `serverNow()` instead of `Date.now()` so a clock-skewed user sees

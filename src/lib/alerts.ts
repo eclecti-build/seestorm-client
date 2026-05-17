@@ -394,7 +394,7 @@ function tornadoProps(
     tornadoCategory: tornadoCategory(d),
     tornadoColor: tornadoColor(d),
     tornadoLabel: tornadoLabel(eventType, d),
-    tornadoLabelTitle: tornadoLabelTitle(d) ?? undefined,
+    tornadoLabelTitle: tornadoLabelTitle(d),
     tornadoAnnotation: tornadoMapAnnotation(d) || undefined,
   };
 }
