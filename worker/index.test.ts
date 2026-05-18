@@ -8,7 +8,7 @@ import worker, {
   type Env,
   type R2BucketListOnly,
 } from './index';
-import { LIVE_CACHE_CONTROL } from './constants';
+import { GEO_CACHE_CONTROL, LIVE_CACHE_CONTROL } from './constants';
 // R2ListOptions / R2Object / R2Objects are declared globally by
 // @cloudflare/workers-types. We import the namespace explicitly so this
 // test file stays compilable even if Vitest's tsconfig resolution drifts
@@ -646,6 +646,39 @@ describe('serveGeoSuggestion', () => {
     );
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.state).toBe('');
+  });
+
+  it('marks GET /v1/geo private and non-storeable while preserving shape and security headers', async () => {
+    const response = await worker.fetch(
+      requestWithCf({
+        postalCode: '53703',
+        regionCode: 'WI',
+        latitude: '43.0747',
+        longitude: '-89.3838',
+      }),
+      fakeEnv(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe(GEO_CACHE_CONTROL);
+    expect(response.headers.get('strict-transport-security')).toBe(
+      'max-age=31536000; includeSubDomains; preload',
+    );
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('x-frame-options')).toBe('DENY');
+    expect(response.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
+    expect(response.headers.get('permissions-policy')).toBe(
+      'geolocation=(self), microphone=(), camera=()',
+    );
+    expect(response.headers.get('content-security-policy-report-only')).toBeTruthy();
+
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      zip: '53703',
+      state: 'WI',
+      lat: 43.0747,
+      lon: -89.3838,
+    });
   });
 });
 
