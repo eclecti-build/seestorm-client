@@ -30,8 +30,7 @@ export interface Env {
 }
 
 // Cache-Control values live in `./constants` so the four header strings stay
-// in one place and match the audit contract verbatim
-// (docs/SWARM_AUDIT_2026-04-18.md — "Constants — paste-ready").
+// in one place.
 //
 // LIVE now carries `stale-while-revalidate=30` — the thundering-herd mitigation
 // at 30s TTL rollover. The edge serves cached bytes to every concurrent client
@@ -40,8 +39,9 @@ export interface Env {
 //
 // LIST adds SWR for the same reason on the (pricier) R2 list class-A op.
 // HISTORY stays immutable — archived timestamps never change content.
-// GEO gets an explicit max-age alongside s-maxage so browsers cache the
-// per-IP answer too, instead of revalidating on every client restart.
+// GEO is deliberately `private, no-store`: it is derived from the
+// requester's IP and can include ZIP/state/lat/lon, so it must never be
+// shared-cacheable.
 
 /** Compact RFC3339-like timestamp: 20060102T150405Z (matches ingest's key format). */
 const TIMESTAMP_RE = /^\d{8}T\d{6}Z$/;
@@ -129,10 +129,11 @@ const CSP_POLICY = [
   // Upstreams: Iowa Mesonet radar, CartoDB basemap (bare host serves
   // style.json; wildcard covers tiles-{a..d}.basemaps.cartocdn.com shard
   // rotations — CSP wildcards do NOT match the apex, so both are required),
-  // Stadia dev basemap, SeeStorm R2-backed Protomaps (subdomain provisioned
-  // by Sean — CAA on seestorm.org limits issuance to LE + GTS), NWS MVP
-  // fallback, and Cloudflare Web Analytics beacon auto-injected by Workers.
-  "connect-src 'self' https://mesonet.agron.iastate.edu https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://tiles.stadiamaps.com https://data.seestorm.org https://api.weather.gov https://cloudflareinsights.com",
+  // Stadia-compatible basemap override, SeeStorm R2-backed Protomaps
+  // (subdomain provisioned by Sean — CAA on seestorm.org limits issuance
+  // to LE + GTS), and Cloudflare Web Analytics beacon auto-injected by
+  // Workers.
+  "connect-src 'self' https://mesonet.agron.iastate.edu https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://tiles.stadiamaps.com https://data.seestorm.org https://cloudflareinsights.com",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
