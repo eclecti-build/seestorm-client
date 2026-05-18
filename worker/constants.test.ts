@@ -6,14 +6,11 @@ import {
   GEO_CACHE_CONTROL,
 } from './constants';
 
-// Pin the four Cache-Control strings to the audit contract verbatim
-// (docs/SWARM_AUDIT_2026-04-18.md — "Constants — paste-ready"). These
-// values are the surface a downstream operator would grep for when
-// debugging a CF cache miss, so drift between this file and the audit
-// doc is a first-class regression — fail loudly rather than let a
-// whitespace change slip in.
+// Pin the four Cache-Control strings. These values are the surface a
+// downstream operator would grep for when debugging a CF cache miss, and
+// /v1/geo's privacy contract depends on staying non-storeable.
 
-describe('worker cache-control constants — audit contract', () => {
+describe('worker cache-control constants', () => {
   it('LIVE carries SWR for thundering-herd mitigation at 30s TTL rollover', () => {
     expect(LIVE_CACHE_CONTROL).toBe('public, max-age=30, s-maxage=60, stale-while-revalidate=30');
   });
@@ -26,7 +23,7 @@ describe('worker cache-control constants — audit contract', () => {
     expect(HISTORY_CACHE_CONTROL).toBe('public, max-age=31536000, immutable');
   });
 
-  it('GEO has browser max-age + edge s-maxage + SWR', () => {
-    expect(GEO_CACHE_CONTROL).toBe('public, max-age=300, s-maxage=300, stale-while-revalidate=60');
+  it('GEO is private and non-storeable because it is IP-derived', () => {
+    expect(GEO_CACHE_CONTROL).toBe('private, no-store');
   });
 });
