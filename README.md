@@ -18,7 +18,7 @@ cross-cutting docs live in the
 
 ```bash
 npm install
-npm run dev         # http://localhost:3000
+npm run dev         # http://localhost:6006
 npm run verify      # full CI gate — lint + format + typecheck + test + build
 ```
 

@@ -6,7 +6,7 @@ Non-profit severe weather visualization for Great Lakes communities.
 - Next.js (App Router) with static export
 - MapLibre GL JS for map rendering
 - Tailwind CSS for styling
-- Deployed to Cloudflare Pages
+- Deployed as Cloudflare Workers + Static Assets
 
 ## Dev
 - `npm run dev` — local dev server
@@ -19,10 +19,10 @@ Non-profit severe weather visualization for Great Lakes communities.
 - Backend ingestion: `eclecti-build/seestorm-ingest`
 
 ## Data Flow
-- Client polls CDN-cached JSON for active alerts (10s TTL)
-- During MVP: direct NWS API polling from client
+- Client polls same-origin Worker `/v1/*` routes for active alerts and history.
+- Worker reads private R2 snapshots through the `SNAPSHOTS` binding; the browser does not poll NWS directly.
 - Radar tiles from Iowa State Mesonet WMS (no key needed)
-- Map tiles from Stadia Maps (dev) → Protomaps on R2 (prod)
+- Basemap style defaults in code and can be overridden with `NEXT_PUBLIC_MAP_STYLE_URL`.
 
 ## Code Conventions
 - TypeScript strict mode, no `any`

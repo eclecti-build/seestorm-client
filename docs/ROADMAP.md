@@ -14,10 +14,10 @@ The minimum viable product: a live weather map for the Great Lakes that anyone c
 - [x] PostGIS schema with spatial indexes
 - [x] JSON snapshot publisher
 - [x] Dark theme, mobile-friendly layout
-- [ ] Deploy frontend to Cloudflare Pages
-- [ ] Provision Neon database with PostGIS
+- [x] Deploy client through Cloudflare Workers + Static Assets
+- [ ] Provision production Neon database with PostGIS
 - [ ] Deploy ingest service to Fly.io
-- [ ] Wire frontend to CDN-cached snapshot (replace direct NWS polling)
+- [x] Wire client to Worker/R2-backed `/v1/*` snapshots
 
 ## Phase 2 — Storm Reports and History
 
@@ -70,8 +70,8 @@ Turn the archive into insight.
 Grow beyond Wisconsin and ensure long-term viability.
 
 - [ ] Multi-state support (configurable NWS_AREA, expand to neighboring states)
-- [ ] Protomaps self-hosted tiles on R2 (eliminate Stadia Maps dependency)
-- [ ] R2 snapshot publishing (replace local file publisher)
+- [ ] Protomaps self-hosted tiles on R2
+- [x] R2 snapshot publishing
 - [ ] CDN-first architecture validation (load test with simulated tornado outbreak traffic)
 - [ ] Non-profit formation (501(c)(3) for seestorm.org)
 - [ ] Community fundraising page
@@ -84,7 +84,7 @@ Grow beyond Wisconsin and ensure long-term viability.
 | Milestone | Trigger | Action |
 |-----------|---------|--------|
 | Neon free tier full (0.5GB) | ~6-12 months of archival | Upgrade to Launch plan ($19/mo) |
-| Stadia Maps rate limited | High traffic event | Switch to Protomaps on R2 |
+| Hosted basemap rate limited | High traffic event | Switch to Protomaps on R2 |
 | Snapshot too large for single JSON | 500+ active alerts | Split by event type or region |
 | Need sub-5s push delivery | Community demand | Add Cloudflare Durable Objects or Ably pub/sub |
 | Multi-state expansion | User demand outside WI | Parameterize ingestion by region, add regional snapshot files |
