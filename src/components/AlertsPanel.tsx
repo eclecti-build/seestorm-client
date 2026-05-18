@@ -61,7 +61,9 @@ function AlertCard({
   now: number;
   userState?: string;
 }) {
-  const color = colorForEvent(alert.properties.event);
+  // Tornado alerts use the normalized category color (magenta ramp); all
+  // other events fall back to the standard per-event palette.
+  const color = alert.properties.tornadoColor ?? colorForEvent(alert.properties.event);
   const tier = tierForEvent(alert.properties.event);
   const url = alert.properties.url;
 
@@ -99,8 +101,12 @@ function AlertCard({
           className="shrink-0"
           style={{ color }}
         />
-        <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color }}>
-          {alert.properties.event}
+        <span
+          className="text-[11px] font-bold uppercase tracking-wide"
+          style={{ color }}
+          title={alert.properties.tornadoLabelTitle}
+        >
+          {alert.properties.tornadoLabel ?? alert.properties.event}
         </span>
         <span className="ml-auto text-[10px] text-gray-400">{tier}</span>
       </div>
@@ -254,7 +260,9 @@ export default function AlertsPanel({
   return (
     <div
       className={`bg-gray-900/95 text-white rounded-lg shadow-xl border border-gray-700 p-2 max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] ${
-        isCollapsed ? 'w-fit' : 'w-80 ss-alerts-maxh overflow-y-auto space-y-2'
+        isCollapsed
+          ? 'w-fit shrink-0'
+          : 'w-80 min-h-0 shrink ss-alerts-maxh overflow-y-auto space-y-2'
       }`}
       role="region"
       aria-label="Active alerts"

@@ -59,6 +59,17 @@ body.ss-scroll {
   max-height: 60dvh;
 }
 
+/* Height cap for the expanded map-legend body. The legend now flows
+ * inline at the bottom of the top-left column (below alerts + location),
+ * so cap it like the alerts panel: a long open legend scrolls internally
+ * instead of pushing the column off a short screen. Paired vh/dvh like
+ * .ss-alerts-maxh so browsers without dynamic-viewport-unit support
+ * still get a cap. */
+.ss-legend-maxh {
+  max-height: 60vh;
+  max-height: 60dvh;
+}
+
 /* Keep MapLibre's default top-anchored controls (zoom/compass) out from
  * under the iOS status bar / Android camera cutout when viewportFit=cover. */
 .maplibregl-ctrl-top-left,

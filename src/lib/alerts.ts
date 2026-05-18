@@ -160,6 +160,16 @@ export function resolveAlertUrl(params: {
 // ---------------------------------------------------------------------------
 
 import type { StormMotion } from './stormMotion';
+import {
+  type TornadoDetection,
+  type TornadoCategory,
+  asTornadoDetection,
+  tornadoCategory,
+  tornadoColor,
+  tornadoLabel,
+  tornadoLabelTitle,
+  tornadoMapAnnotation,
+} from './tornado';
 import { synthesizeGeometryFromAreaDesc, type CountyLookup } from './countyGeometry';
 
 // Ingest snapshot shape (from seestorm-ingest internal/publisher.Snapshot).
@@ -185,6 +195,10 @@ export interface IngestAlert {
   // snapshots (single-state Wisconsin) deserialize unchanged.
   area_state?: string | null;
   states?: string[];
+  // Additive (no schema bump): the normalized tornado detection axis
+  // derived by ingest. Absent for every non-tornado product. See umbrella
+  // docs/TORNADO_DETECTION_CONTRACT.md.
+  tornado?: TornadoDetection | null;
 }
 
 /**
@@ -297,6 +311,26 @@ export interface WeatherAlertProperties {
    * so users understand cross-border scope.
    */
   states?: string[];
+  /**
+   * Tornado detection axis. `tornado` is the structured object (used by
+   * the side panel, which holds the real WeatherAlert object). The flat
+   * fields are denormalized onto the GeoJSON feature properties so
+   * MapLibre layer filters and the click-popup can read them WITHOUT
+   * tripping the nested-object stringification gotcha (queried features
+   * JSON-stringify nested props). All optional/additive.
+   */
+  tornado?: TornadoDetection | null;
+  tornadoConfirmed?: boolean;
+  /** Normalized single category — the stateful ladder, not a compound. */
+  tornadoCategory?: TornadoCategory;
+  /** Category color (magenta-ramp); drives label + parallel map layers. */
+  tornadoColor?: string;
+  /** Pre-rendered single label, e.g. "Tornado Warning — Confirmed". */
+  tornadoLabel?: string;
+  /** Spelled-out tooltip for the label (e.g. PDS expansion). */
+  tornadoLabelTitle?: string;
+  /** On-map call-to-action; only set when confirmed. */
+  tornadoAnnotation?: string;
 }
 
 export interface WeatherAlert {
@@ -333,8 +367,35 @@ export function ingestToWeatherAlert(a: IngestAlert): WeatherAlert {
       // can badge multi-state products. Copied defensively to keep the view
       // shape independent of the ingest object's reference.
       states: Array.isArray(a.states) ? [...a.states] : undefined,
+      // Tornado detection: narrow the loosely-cast snapshot field, then
+      // denormalize to flat primitives for map filters / the click popup.
+      // `tornado` (object) is kept for the side panel; the flat fields are
+      // what MapLibre and the queried-feature popup actually read.
+      ...tornadoProps(a.event_type, asTornadoDetection(a.tornado)),
     },
     geometry: a.geometry,
+  };
+}
+
+/**
+ * Compute the flat tornado feature properties from a narrowed detection.
+ * Returns an empty object when there is no detection so non-tornado
+ * features carry no tornado keys at all (smaller features, simpler
+ * filters: `['==', ['get','tornadoConfirmed'], true]` is naturally false).
+ */
+function tornadoProps(
+  eventType: string,
+  d: TornadoDetection | null,
+): Partial<WeatherAlertProperties> {
+  if (!d) return {};
+  return {
+    tornado: d,
+    tornadoConfirmed: d.confirmed,
+    tornadoCategory: tornadoCategory(d),
+    tornadoColor: tornadoColor(d),
+    tornadoLabel: tornadoLabel(eventType, d),
+    tornadoLabelTitle: tornadoLabelTitle(d),
+    tornadoAnnotation: tornadoMapAnnotation(d) || undefined,
   };
 }
 

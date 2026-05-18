@@ -201,6 +201,16 @@ export default function WeatherMap() {
       return next;
     });
   }, []);
+  // On-map confirmed-tornado CTA text ("TAKE COVER") — the ONLY verbiage
+  // drawn over the basemap, and not everyone wants words on the map, so
+  // it's user-toggleable from the legend. Default ON (it's a public-safety
+  // message); session-only like the tier/event toggles. This gate only
+  // ever *subtracts* — the CTA still vanishes in forecast mode or when
+  // Warnings are hidden (enforced in the visibility effect). The pulse/
+  // halo emphasis is deliberately NOT governed here: it's a low-intrusion
+  // visual cue, not text.
+  const [showTornadoCta, setShowTornadoCta] = useState<boolean>(true);
+  const toggleTornadoCta = useCallback(() => setShowTornadoCta((v) => !v), []);
   // `now` is a ticking reference time used only for rendering "Xm ago" labels.
   // Kept in state (not read directly via Date.now() in render) so React 19's
   // purity lint stays happy and re-renders only fire at the cadence we choose.
@@ -835,8 +845,52 @@ export default function WeatherMap() {
         m.setFilter(id, filter);
       }
     }
+    // Confirmed-tornado emphasis tracks the Warning tier gate (a Tornado
+    // Warning is a Warning): it must vanish in forecast mode and when the
+    // user hides Warnings, so a pulsing "TAKE COVER" ring is never
+    // stranded over a model frame or a hidden tier. Filter = confirmed
+    // AND the Warning event filter, so a per-event hide of "Tornado
+    // Warning" (via hiddenEvents) drops the pulse too. alertLayerFilter
+    // returns a modern expression tree, so nesting it under `all` is safe.
+    const tornadoVisibility = isForecast || hiddenTiers.has('Warning') ? 'none' : 'visible';
+    const tornadoConfirmedFilter = [
+      'all',
+      ['==', ['get', 'tornadoConfirmed'], true],
+      alertLayerFilters.Warning,
+    ] as unknown as maplibregl.FilterSpecification;
+    // Category outline covers ALL tornado polygons (incl. radar-indicated),
+    // still AND-gated to the Warning event filter so a per-event hide drops
+    // it too.
+    const tornadoPresentVisFilter = [
+      'all',
+      ['has', 'tornadoColor'],
+      alertLayerFilters.Warning,
+    ] as unknown as maplibregl.FilterSpecification;
+    if (m.getLayer('tornado-cat-outline')) {
+      m.setLayoutProperty('tornado-cat-outline', 'visibility', tornadoVisibility);
+      m.setFilter('tornado-cat-outline', tornadoPresentVisFilter);
+    }
+    for (const id of [
+      'tornado-confirmed-halo',
+      'tornado-confirmed-pulse',
+      'tornado-confirmed-label',
+    ]) {
+      if (!m.getLayer(id)) continue;
+      // The label is the on-map "TAKE COVER" CTA — the only verbiage on
+      // the map. It carries one extra, user-controlled gate (`showTornadoCta`)
+      // on top of the shared tier/forecast gate. Halo + pulse ignore it:
+      // they're a wordless visual cue and stay on the tier gate alone. The
+      // user gate can only *subtract* — it never lets the CTA survive a
+      // forecast frame or a hidden Warning tier, because `tornadoVisibility`
+      // is still the ceiling.
+      const visibility =
+        id === 'tornado-confirmed-label' && !showTornadoCta ? 'none' : tornadoVisibility;
+      m.setLayoutProperty(id, 'visibility', visibility);
+      m.setFilter(id, tornadoConfirmedFilter);
+    }
+
     setMotionVisibility(m, !isForecast);
-  }, [mapReady, isForecast, hiddenTiers, alertLayerFilters]);
+  }, [mapReady, isForecast, hiddenTiers, alertLayerFilters, showTornadoCta]);
 
   // Map init.
   useEffect(() => {
@@ -844,7 +898,7 @@ export default function WeatherMap() {
 
     // Basemap style: defaults to CartoDB Dark Matter (free, no-key, works from any
     // origin, and matches the dark SeeStorm theme). Override via NEXT_PUBLIC_MAP_STYLE_URL
-    // when self-hosting Protomaps on R2 or using a keyed Stadia Maps style.
+    // when self-hosting Protomaps on R2 or using another MapLibre-compatible style.
     const mapStyle =
       process.env.NEXT_PUBLIC_MAP_STYLE_URL ||
       'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -1270,6 +1324,140 @@ export default function WeatherMap() {
       });
 
       // ---------------------------------------------------------------------
+      // Confirmed-tornado emphasis (ADDITIVE — does not modify the existing
+      // alert fill/outline paint, per SPIKES.md). A bright pulsing ring plus
+      // an on-map call-to-action, gated on the flat `tornadoConfirmed`
+      // feature property. Radar-indicated tornadoes are deliberately left
+      // un-pulsed so the animation itself carries the "confirmed on the
+      // ground vs. not" meaning. No fill layer is added, so interior clicks
+      // still fall through to `alert-fills-warning` and the popup is
+      // unaffected.
+      // ---------------------------------------------------------------------
+      const confirmedTornadoFilter = [
+        '==',
+        ['get', 'tornadoConfirmed'],
+        true,
+      ] as unknown as maplibregl.FilterSpecification;
+      const tornadoColorExpr = [
+        'get',
+        'tornadoColor',
+      ] as unknown as maplibregl.ExpressionSpecification;
+
+      // Every tornado polygon — including radar-indicated — gets a
+      // category-COLORED border on this parallel layer. The shared
+      // event-color expression on alert-outlines-warning is left untouched
+      // (SPIKES.md): this is how the four-level magenta ramp reaches the
+      // map without editing existing alert paint. Filter is "has a tornado
+      // category" so non-tornado alerts are unaffected.
+      const tornadoPresentFilter = [
+        'has',
+        'tornadoColor',
+      ] as unknown as maplibregl.FilterSpecification;
+      m.addLayer({
+        id: 'tornado-cat-outline',
+        type: 'line',
+        source: 'alerts',
+        filter: tornadoPresentFilter,
+        paint: {
+          'line-color': tornadoColorExpr,
+          'line-width': 3.25,
+          'line-opacity': 0.95,
+        },
+      });
+
+      m.addLayer({
+        id: 'tornado-confirmed-halo',
+        type: 'line',
+        source: 'alerts',
+        filter: confirmedTornadoFilter,
+        paint: {
+          // Persistent wide band: gives confirmed tornado warnings an
+          // immediately visible footprint even between pulse peaks.
+          'line-color': tornadoColorExpr,
+          'line-width': [
+            'match',
+            ['get', 'tornadoCategory'],
+            'EMERGENCY',
+            12,
+            'PDS',
+            10,
+            8,
+          ] as unknown as maplibregl.ExpressionSpecification,
+          'line-opacity': 0.32,
+          'line-blur': 0.5,
+        },
+      });
+
+      m.addLayer({
+        id: 'tornado-confirmed-pulse',
+        type: 'line',
+        source: 'alerts',
+        filter: confirmedTornadoFilter,
+        paint: {
+          // Pulse rendered in the category color; radar-indicated never
+          // reaches this layer (confirmed-only filter) so the static
+          // cat-outline above is its sole, un-pulsed treatment.
+          'line-color': tornadoColorExpr,
+          'line-width': [
+            'match',
+            ['get', 'tornadoCategory'],
+            'EMERGENCY',
+            10,
+            'PDS',
+            8.5,
+            7,
+          ] as unknown as maplibregl.ExpressionSpecification,
+          // Initial value; the pulse effect animates this when motion is
+          // allowed, or pins it static under prefers-reduced-motion.
+          'line-opacity': 1,
+        },
+      });
+
+      m.addLayer({
+        id: 'tornado-confirmed-label',
+        type: 'symbol',
+        source: 'alerts',
+        filter: confirmedTornadoFilter,
+        layout: {
+          'text-field': ['get', 'tornadoAnnotation'],
+          // 'Open Sans Semibold' is already used by the storm-motion label
+          // layer, so the basemap glyph stack is known to ship it.
+          'text-font': ['Open Sans Semibold'],
+          // At regional/state zoom, the halo/pulse carries the signal and
+          // text would obscure the warning footprint. Fade the CTA in only
+          // once there is enough map scale to read it without billboarding.
+          'text-size': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            6.5,
+            10,
+            8,
+            13,
+            10,
+            14,
+          ] as unknown as maplibregl.ExpressionSpecification,
+          'text-allow-overlap': false,
+          'text-letter-spacing': 0.04,
+          'text-max-width': 12,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#7f1d1d',
+          'text-halo-width': 2,
+          'text-opacity': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            6.25,
+            0,
+            7.25,
+            1,
+          ] as unknown as maplibregl.ExpressionSpecification,
+        },
+      });
+
+      // ---------------------------------------------------------------------
       // Storm motion layers
       // ---------------------------------------------------------------------
       //
@@ -1431,6 +1619,77 @@ export default function WeatherMap() {
     };
   }, []);
 
+  // True only when at least one rendered alert is a confirmed tornado.
+  // Gates the pulse loop off the common (clear-weather) path entirely.
+  const hasConfirmedTornado = useMemo(
+    () => allAlerts.some((a) => a.properties.tornadoConfirmed === true),
+    [allAlerts],
+  );
+
+  // Pulse the confirmed-tornado ring. Self-contained rAF loop with strict
+  // teardown; gentle sine ease (deliberately NOT a strobe — a strobing
+  // polygon in a public-safety app is a photosensitivity hazard).
+  //
+  // The loop is gated so it does NOT run on the overwhelmingly common
+  // path: it starts only when a confirmed tornado is actually present AND
+  // the layer is visible (not forecast mode, Warnings not hidden). A
+  // clear-weather session must not burn ~60fps setPaintProperty for zero
+  // features. prefers-reduced-motion pins a static high-emphasis opacity
+  // and is re-evaluated live if the OS setting is toggled mid-session.
+  useEffect(() => {
+    if (!mapReady) return;
+    if (!hasConfirmedTornado || isForecast || hiddenTiers.has('Warning')) return;
+
+    const LAYER = 'tornado-confirmed-pulse';
+    const setOpacity = (v: number) => {
+      const m = map.current;
+      if (!m || !m.getLayer(LAYER)) return;
+      try {
+        m.setPaintProperty(LAYER, 'line-opacity', v);
+      } catch {
+        // Style reloaded between frames — the next frame retries safely.
+      }
+    };
+
+    const MIN = 0.45;
+    const MAX = 1;
+    const PERIOD_MS = 950;
+    let raf = 0;
+    const startLoop = () => {
+      const start = performance.now();
+      const tick = (now: number) => {
+        const phase = ((now - start) % PERIOD_MS) / PERIOD_MS; // 0..1
+        const eased = (1 - Math.cos(phase * 2 * Math.PI)) / 2; // 0..1..0
+        setOpacity(MIN + (MAX - MIN) * eased);
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+    };
+    const stopLoop = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+    };
+
+    const mql =
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null;
+    const apply = () => {
+      stopLoop();
+      if (mql?.matches) {
+        setOpacity(0.95); // static high-emphasis — no animation
+      } else {
+        startLoop();
+      }
+    };
+    apply();
+    mql?.addEventListener('change', apply);
+    return () => {
+      stopLoop();
+      mql?.removeEventListener('change', apply);
+    };
+  }, [mapReady, hasConfirmedTornado, isForecast, hiddenTiers]);
+
   // Tick `now` every 30s so the "Xm ago" label advances without a full re-fetch.
   // Reads `serverNow()` instead of `Date.now()` so a clock-skewed user sees
   // labels anchored to the server's authoritative time (swarm audit 2026-04-18,
@@ -1505,13 +1764,16 @@ export default function WeatherMap() {
         </div>
       )}
 
-      {/* Top-left panel stack: active alerts → ZIP filter chip → legend.
-          Shared absolute column so the chip and legend naturally flex when
-          either accordion expands — opening the LocationChip pushes the
-          MapLegend down rather than overlapping it (the prior absolute
-          bottom-left positioning of the legend caused the two to drift
-          out of visual relationship as the chip grew). All three respect
-          the same safe-area insets on notched devices. */}
+      {/* Top-left panel column: active alerts → ZIP filter chip → legend.
+          Sizes to its content — it is deliberately NOT a fixed-height
+          `overflow-hidden` flex column (that, plus a pre-disclosure
+          13-row legend, was the heavy/clipped stack we undid). AlertsPanel
+          self-caps at 60vh (`ss-alerts-maxh`) and scrolls solo behind a
+          sticky header; the legend sits inline below the location chip
+          (its natural, expected home) and is lightweight now — collapsed
+          by default, per-event list behind a disclosure, body
+          viewport-capped — so stacking it here no longer reintroduces the
+          old heaviness. Safe-area insets on notched devices. */}
       <div className="absolute top-[calc(4rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] flex flex-col gap-2 items-start">
         {/* Active alerts list — surfaces every alert (polygon + zone-only).
             Critical for Watches and other zone-aggregate products that have
@@ -1530,16 +1792,17 @@ export default function WeatherMap() {
             so users find it without it obstructing the map. */}
         <LocationChip onLocationChange={handleLocationChange} />
 
-        {/* Static legend — collapsed by default; explains polygon tiers +
-            motion vector glyphs so new users can read the map without an
-            onboarding. Sits in the same column as the LocationChip so
-            expanding either accordion flexes the other into a clean
-            stacked layout. */}
+        {/* Static legend — collapsed by default; aligned inline directly
+            below the location selector (its expected home). Decoupled
+            from AlertsPanel's scroll only by the column being
+            content-sized, not by living in a different corner. */}
         <MapLegend
           hiddenTiers={hiddenTiers}
           onToggleTier={toggleTier}
           hiddenEvents={hiddenEvents}
           onToggleEvent={toggleEvent}
+          showTornadoCta={showTornadoCta}
+          onToggleTornadoCta={toggleTornadoCta}
         />
       </div>
 
@@ -1586,10 +1849,13 @@ export default function WeatherMap() {
               <div
                 className="text-xs font-bold uppercase tracking-wide mb-1"
                 style={{
-                  color: colorForEvent(selectedAlert.properties.event),
+                  color:
+                    selectedAlert.properties.tornadoColor ??
+                    colorForEvent(selectedAlert.properties.event),
                 }}
+                title={selectedAlert.properties.tornadoLabelTitle}
               >
-                {selectedAlert.properties.event}
+                {selectedAlert.properties.tornadoLabel ?? selectedAlert.properties.event}
               </div>
               <div className="text-sm font-semibold mb-2">{selectedAlert.properties.headline}</div>
               <div className="text-xs text-gray-300 mb-2">{selectedAreaDesc}</div>
