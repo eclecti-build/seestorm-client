@@ -201,6 +201,16 @@ export default function WeatherMap() {
       return next;
     });
   }, []);
+  // On-map confirmed-tornado CTA text ("TAKE COVER") — the ONLY verbiage
+  // drawn over the basemap, and not everyone wants words on the map, so
+  // it's user-toggleable from the legend. Default ON (it's a public-safety
+  // message); session-only like the tier/event toggles. This gate only
+  // ever *subtracts* — the CTA still vanishes in forecast mode or when
+  // Warnings are hidden (enforced in the visibility effect). The pulse/
+  // halo emphasis is deliberately NOT governed here: it's a low-intrusion
+  // visual cue, not text.
+  const [showTornadoCta, setShowTornadoCta] = useState<boolean>(true);
+  const toggleTornadoCta = useCallback(() => setShowTornadoCta((v) => !v), []);
   // `now` is a ticking reference time used only for rendering "Xm ago" labels.
   // Kept in state (not read directly via Date.now() in render) so React 19's
   // purity lint stays happy and re-renders only fire at the cadence we choose.
@@ -866,12 +876,21 @@ export default function WeatherMap() {
       'tornado-confirmed-label',
     ]) {
       if (!m.getLayer(id)) continue;
-      m.setLayoutProperty(id, 'visibility', tornadoVisibility);
+      // The label is the on-map "TAKE COVER" CTA — the only verbiage on
+      // the map. It carries one extra, user-controlled gate (`showTornadoCta`)
+      // on top of the shared tier/forecast gate. Halo + pulse ignore it:
+      // they're a wordless visual cue and stay on the tier gate alone. The
+      // user gate can only *subtract* — it never lets the CTA survive a
+      // forecast frame or a hidden Warning tier, because `tornadoVisibility`
+      // is still the ceiling.
+      const visibility =
+        id === 'tornado-confirmed-label' && !showTornadoCta ? 'none' : tornadoVisibility;
+      m.setLayoutProperty(id, 'visibility', visibility);
       m.setFilter(id, tornadoConfirmedFilter);
     }
 
     setMotionVisibility(m, !isForecast);
-  }, [mapReady, isForecast, hiddenTiers, alertLayerFilters]);
+  }, [mapReady, isForecast, hiddenTiers, alertLayerFilters, showTornadoCta]);
 
   // Map init.
   useEffect(() => {
@@ -1745,14 +1764,17 @@ export default function WeatherMap() {
         </div>
       )}
 
-      {/* Top-left panel stack: active alerts → ZIP filter chip → legend.
-          Shared absolute column so the chip and legend naturally flex when
-          either accordion expands — opening the LocationChip pushes the
-          MapLegend down rather than overlapping it (the prior absolute
-          bottom-left positioning of the legend caused the two to drift
-          out of visual relationship as the chip grew). All three respect
-          the same safe-area insets on notched devices. */}
-      <div className="absolute top-[calc(4rem+env(safe-area-inset-top))] bottom-[calc(1rem+env(safe-area-inset-bottom))] left-[calc(1rem+env(safe-area-inset-left))] max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] min-h-0 flex flex-col gap-2 items-start overflow-hidden">
+      {/* Top-left panel column: active alerts → ZIP filter chip → legend.
+          Sizes to its content — it is deliberately NOT a fixed-height
+          `overflow-hidden` flex column (that, plus a pre-disclosure
+          13-row legend, was the heavy/clipped stack we undid). AlertsPanel
+          self-caps at 60vh (`ss-alerts-maxh`) and scrolls solo behind a
+          sticky header; the legend sits inline below the location chip
+          (its natural, expected home) and is lightweight now — collapsed
+          by default, per-event list behind a disclosure, body
+          viewport-capped — so stacking it here no longer reintroduces the
+          old heaviness. Safe-area insets on notched devices. */}
+      <div className="absolute top-[calc(4rem+env(safe-area-inset-top))] left-[calc(1rem+env(safe-area-inset-left))] max-w-[calc(100vw-2rem-env(safe-area-inset-left)-env(safe-area-inset-right))] flex flex-col gap-2 items-start">
         {/* Active alerts list — surfaces every alert (polygon + zone-only).
             Critical for Watches and other zone-aggregate products that have
             no geometry and therefore don't appear on the map. Clicking a card
@@ -1770,16 +1792,17 @@ export default function WeatherMap() {
             so users find it without it obstructing the map. */}
         <LocationChip onLocationChange={handleLocationChange} />
 
-        {/* Static legend — collapsed by default; explains polygon tiers +
-            motion vector glyphs so new users can read the map without an
-            onboarding. Sits in the same column as the LocationChip so
-            expanding either accordion flexes the other into a clean
-            stacked layout. */}
+        {/* Static legend — collapsed by default; aligned inline directly
+            below the location selector (its expected home). Decoupled
+            from AlertsPanel's scroll only by the column being
+            content-sized, not by living in a different corner. */}
         <MapLegend
           hiddenTiers={hiddenTiers}
           onToggleTier={toggleTier}
           hiddenEvents={hiddenEvents}
           onToggleEvent={toggleEvent}
+          showTornadoCta={showTornadoCta}
+          onToggleTornadoCta={toggleTornadoCta}
         />
       </div>
 
