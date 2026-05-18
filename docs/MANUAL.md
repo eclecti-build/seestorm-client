@@ -2,171 +2,102 @@
 
 ## Project Overview
 
-SeeStorm is a two-repo non-profit application providing ad-free severe weather visualization for Great Lakes communities. It ingests public NWS data, archives it permanently, and presents it on an interactive map.
+SeeStorm is a two-repo public-safety application for ad-free severe weather visualization in Great Lakes communities. The ingest service polls public weather sources, archives events, publishes JSON snapshots to private R2, and the client Worker exposes the reviewed `/v1/*` public API surface.
 
 | Repo | Purpose | Stack |
-|------|---------|-------|
-| [`seestorm`](https://github.com/eclecti-build/seestorm) | Frontend — interactive weather map | Next.js, MapLibre GL JS, Tailwind CSS |
-| [`seestorm-ingest`](https://github.com/eclecti-build/seestorm-ingest) | Backend — data ingestion and archival | Go, PostGIS, Fly.io |
+|---|---|---|
+| [`seestorm-client`](https://github.com/eclecti-build/seestorm-client) | Public web app and Worker read API | Next.js static export, Cloudflare Workers, MapLibre GL JS, Tailwind CSS |
+| [`seestorm-ingest`](https://github.com/eclecti-build/seestorm-ingest) | Data ingestion and archival | Go, PostGIS, Fly.io, Cloudflare R2 |
 
 ## Repository Structure
 
-### seestorm (frontend)
+### seestorm-client
 
-```
-seestorm/
+```text
+seestorm-client/
 ├── src/
-│   ├── app/
-│   │   ├── layout.tsx          # Root layout, metadata, dark theme
-│   │   ├── page.tsx            # Home page, loads map dynamically
-│   │   └── globals.css         # Tailwind imports, full-height body
-│   └── components/
-│       └── WeatherMap.tsx      # Core map component (MapLibre + NWS)
+│   ├── app/                   # Next.js App Router static export
+│   ├── components/            # Map and chrome components
+│   └── lib/                   # Client-side parsing, filtering, and helpers
+├── worker/
+│   ├── index.ts               # Cloudflare Worker for /v1/* and assets
+│   └── constants.ts           # Cache-Control contract for Worker responses
+├── public/                    # Static data and public assets
 ├── docs/
-│   ├── ARCHITECTURE.md         # System architecture diagram
-│   ├── SETUP.md                # Environment setup guide
-│   ├── MANUAL.md               # This file
-│   └── ROADMAP.md              # Feature roadmap
-├── .env.example                # Environment variable template
-├── next.config.ts              # Static export config
-├── CLAUDE.md                   # AI assistant instructions
+├── wrangler.jsonc             # Worker + static assets + R2 binding
 └── package.json
 ```
 
-### seestorm-ingest (backend)
+### seestorm-ingest
 
-```
+```text
 seestorm-ingest/
-├── cmd/
-│   └── ingest/
-│       └── main.go             # Entry point, signal handling
-├── internal/
-│   ├── nws/
-│   │   ├── client.go           # NWS API HTTP client
-│   │   └── types.go            # Alert GeoJSON types
-│   ├── spc/
-│   │   ├── client.go           # SPC storm reports CSV parser
-│   │   └── types.go            # Storm report types
-│   ├── store/
-│   │   ├── postgres.go         # PostGIS connection and queries
-│   │   └── queries.go          # SQL constants (DDL, upserts)
-│   ├── publisher/
-│   │   └── snapshot.go         # JSON snapshot writer (local/R2)
-│   └── poller/
-│       └── poller.go           # Polling orchestrator (tick loop)
-├── migrations/
-│   └── 001_initial.sql         # PostGIS schema
-├── .env.example                # Environment variable template
-├── Dockerfile                  # Multi-stage Alpine build
-├── fly.toml                    # Fly.io deployment config
-└── CLAUDE.md                   # AI assistant instructions
+├── cmd/ingest/                # Entry point
+├── internal/nws/              # NWS API client and parsers
+├── internal/spc/              # SPC storm report client
+├── internal/store/            # PostGIS persistence
+├── internal/publisher/        # Local and R2 snapshot publishing
+├── internal/poller/           # Polling loop
+├── migrations/                # SQL baseline
+├── Dockerfile
+└── fly.toml
 ```
 
 ## Development Workflow
 
-### Running the Frontend
+### Running the Client
 
 ```bash
-cd seestorm
-cp .env.example .env.local
+cd seestorm-client
 npm install
 npm run dev
 ```
 
-The frontend works standalone in MVP mode — it polls NWS directly from the browser. No backend required for basic alert visualization and radar.
+The local Next dev server serves the app shell. Production API traffic goes through the Cloudflare Worker routes under `/v1/*`; use `npm run cf:dev` when validating Worker behavior locally.
 
 ### Running the Ingest Service
 
 ```bash
 cd seestorm-ingest
 cp .env.example .env
-# Edit .env — set DATABASE_URL to your Neon connection string
+# Edit .env and set DATABASE_URL
 go run ./cmd/ingest
 ```
 
-The service starts polling NWS every 30 seconds, writes to PostGIS, and publishes a JSON snapshot locally.
-
-### Running Both Together (Local)
-
-1. Start the ingest service (writes `snapshots/active-events.json`)
-2. Serve the snapshots directory: `npx serve seestorm-ingest/snapshots --cors -l 8080`
-3. Set `NEXT_PUBLIC_EVENTS_API_URL=http://localhost:8080/active-events.json` in frontend `.env.local`
-4. Start the frontend: `npm run dev`
+The service polls NWS and SPC sources, writes to PostGIS, and publishes snapshots locally and/or to Cloudflare R2 depending on configuration.
 
 ## Data Flow
 
-```
-1. NWS publishes alert        → api.weather.gov/alerts/active?area=WI
-2. Ingest service polls (30s) → Parses GeoJSON, deduplicates by nws_id
-3. Write to PostGIS            → weather_events table with GIST spatial index
-4. Publish snapshot            → active-events.json (local file or R2 upload)
-5. CDN caches snapshot         → Cloudflare edge, 10s TTL
-6. Frontend polls (10-30s)     → Renders polygons on MapLibre map
+```text
+1. NWS/SPC publish weather data
+2. seestorm-ingest polls, parses, deduplicates, and stores events
+3. seestorm-ingest writes active and history snapshots to private R2
+4. seestorm-client Worker reads allowed R2 keys through the SNAPSHOTS binding
+5. Browser fetches same-origin /v1/* routes and renders the MapLibre view
 ```
 
 ## Key Technical Decisions
 
-### Why static export instead of SSR?
+### Why static export plus Worker?
 
-During a tornado outbreak, traffic spikes 10-100x. Static files on Cloudflare's CDN can't go down — there's no server to overwhelm. The map is a client-side component anyway (WebGL), so SSR provides no benefit for the core experience.
+The map is a client-side WebGL experience, so SSR does not materially improve the core path. Static assets keep the page durable during traffic spikes, while the Worker gives the project a narrow, reviewable API surface for snapshots, history, security headers, and privacy-sensitive geo suggestions.
 
-### Why poll instead of WebSockets?
+### Why poll cached JSON instead of WebSockets?
 
-50,000 concurrent WebSocket connections require dedicated infrastructure. 50,000 users polling a CDN-cached JSON file every 10 seconds hit the origin maybe once per 10 seconds total. The 10-second staleness is acceptable — NWS data itself only updates every 30-60 seconds.
+High-concurrency weather events are a better fit for cacheable snapshot reads than dedicated connections. The ingest cadence and Worker cache headers keep the public view current enough for the data sources while avoiding an origin service on the user traffic path.
 
-### Why Go for ingestion?
+### Why private R2?
 
-~20MB memory footprint, single binary deployment, excellent HTTP stdlib. A single $3/month Fly.io machine handles the entire ingestion pipeline. Go's simplicity also makes it easy for new contributors to understand the codebase.
+The bucket has no public access. Only the client Worker reads through an internal binding, and only ingest writes through scoped credentials. Public routes are code-reviewed in `worker/index.ts`.
 
-### Why PostGIS over plain Postgres?
+### Why Go and PostGIS for ingest?
 
-NWS data is inherently spatial — warning polygons, tornado paths, storm report coordinates. PostGIS gives us GIST spatial indexes, `ST_Within` for "is this user inside a warning?", `ST_AsGeoJSON` for direct GeoJSON export, and `ST_Intersects` for finding overlapping events. These would require complex custom code without PostGIS.
-
-## Database Schema
-
-### weather_events
-
-Stores every NWS alert with full geometry. Upserts by `nws_id` so re-polled alerts update in place.
-
-| Column | Type | Purpose |
-|--------|------|---------|
-| `nws_id` | `TEXT UNIQUE` | NWS deduplication key |
-| `event_type` | `TEXT` | Tornado Warning, Severe Thunderstorm Warning, etc. |
-| `geometry` | `GEOMETRY(Geometry, 4326)` | Warning polygon, point, or linestring |
-| `properties` | `JSONB` | Raw NWS properties (never lose data) |
-| `effective_at` | `TIMESTAMPTZ` | When the alert became active |
-| `expires_at` | `TIMESTAMPTZ` | When the alert expires |
-
-### storm_reports
-
-Stores SPC storm reports (tornado touchdowns, hail, wind damage) as point geometries.
-
-| Column | Type | Purpose |
-|--------|------|---------|
-| `report_type` | `TEXT` | tornado, hail, wind |
-| `magnitude` | `TEXT` | EF scale, hail diameter, wind speed |
-| `geometry` | `GEOMETRY(Point, 4326)` | Report location |
-| `reported_at` | `TIMESTAMPTZ` | Time of report |
+Go produces a small single binary for Fly.io, and PostGIS gives native spatial indexing and geometry operations for NWS polygons, storm paths, and event archive queries.
 
 ## Conventions
 
-### Commits
-
-Use conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`
-
-### Branches
-
-Use prefix naming: `feat/`, `fix/`, `chore/`, `docs/`
-
-### Code
-
-- TypeScript: strict mode, no `any`, use `unknown` + type guards
-- Go: standard project layout, `internal/` for non-exported packages
-- Both: keep functions under 50 lines, error messages should be actionable
-
-### Environment
-
-- Never commit `.env` or `.env.local` files
-- Always update `.env.example` when adding new variables
-- Use Fly.io secrets for production backend config
-- Use Cloudflare Pages env vars for production frontend config
+- TypeScript: strict mode, no `any`; use `unknown` plus type guards.
+- Go: wrap errors with `%w`; no panics outside startup.
+- Tests: colocate focused tests with source.
+- Commits: use `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, or `test:`.
+- Environment: never commit secrets or local `.env*` files.
