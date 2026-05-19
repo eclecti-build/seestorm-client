@@ -306,4 +306,60 @@ describe('<AlertsPanel />', () => {
       expect(screen.getByText('Elkhart, IN; Branch, MI; St. Joseph, MI')).toBeInTheDocument();
     });
   });
+
+  describe('hover highlighting', () => {
+    it('fires onHoverAlert with the nwsId on mouseenter and onLeaveAlert on mouseleave', () => {
+      const onHover = vi.fn();
+      const onLeave = vi.fn();
+      const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
+      render(
+        <AlertsPanel
+          alerts={[tornado]}
+          onSelect={() => {}}
+          onHoverAlert={onHover}
+          onLeaveAlert={onLeave}
+          now={FIXED_NOW}
+        />,
+      );
+
+      const card = screen.getByRole('button', { name: /tornado warning/i });
+      fireEvent.mouseEnter(card);
+      expect(onHover).toHaveBeenCalledTimes(1);
+      expect(onHover).toHaveBeenCalledWith('TO.1');
+
+      fireEvent.mouseLeave(card);
+      expect(onLeave).toHaveBeenCalledTimes(1);
+    });
+
+    it('applies a visual highlight to the card matching hoveredAlertId', () => {
+      const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
+      render(
+        <AlertsPanel
+          alerts={[tornado]}
+          onSelect={() => {}}
+          hoveredAlertId="TO.1"
+          now={FIXED_NOW}
+        />,
+      );
+
+      const card = screen.getByRole('button', { name: /tornado warning/i });
+      expect(card).toHaveClass('border-gray-500');
+    });
+
+    it('does not highlight cards that do not match hoveredAlertId', () => {
+      const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
+      render(
+        <AlertsPanel
+          alerts={[tornado]}
+          onSelect={() => {}}
+          hoveredAlertId="OTHER"
+          now={FIXED_NOW}
+        />,
+      );
+
+      const card = screen.getByRole('button', { name: /tornado warning/i });
+      expect(card).not.toHaveClass('border-gray-500');
+      expect(card).toHaveClass('border-gray-700');
+    });
+  });
 });

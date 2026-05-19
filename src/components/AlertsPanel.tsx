@@ -51,12 +51,18 @@ function RelativeExpiry({ iso, now }: { iso: string; now: number }) {
 function AlertCard({
   alert,
   selected,
+  hovered,
+  onHoverAlert,
+  onLeaveAlert,
   onSelect,
   now,
   userState,
 }: {
   alert: WeatherAlert;
   selected: boolean;
+  hovered: boolean;
+  onHoverAlert?: (nwsId: string) => void;
+  onLeaveAlert?: () => void;
   onSelect: (a: WeatherAlert) => void;
   now: number;
   userState?: string;
@@ -79,11 +85,18 @@ function AlertCard({
     <button
       type="button"
       onClick={() => onSelect(alert)}
+      onMouseEnter={() => {
+        const nwsId = alert.properties.nwsId;
+        if (nwsId && onHoverAlert) onHoverAlert(nwsId);
+      }}
+      onMouseLeave={() => onLeaveAlert?.()}
       aria-pressed={selected}
       className={`w-full text-left p-2 rounded border transition-colors ${
         selected
           ? 'bg-gray-700 border-white/40'
-          : 'bg-gray-800/80 border-gray-700 hover:bg-gray-800'
+          : hovered
+            ? 'bg-gray-700/70 border-gray-500'
+            : 'bg-gray-800/80 border-gray-700 hover:bg-gray-800'
       }`}
     >
       <div className="flex items-center gap-2 mb-1">
@@ -134,6 +147,9 @@ function FamilySection({
   family,
   alerts,
   selectedId,
+  hoveredAlertId,
+  onHoverAlert,
+  onLeaveAlert,
   onSelect,
   now,
   userState,
@@ -141,6 +157,9 @@ function FamilySection({
   family: AlertFamily;
   alerts: WeatherAlert[];
   selectedId: string | null;
+  hoveredAlertId: string | null;
+  onHoverAlert?: (nwsId: string) => void;
+  onLeaveAlert?: () => void;
   onSelect: (a: WeatherAlert) => void;
   now: number;
   userState?: string;
@@ -176,11 +195,15 @@ function FamilySection({
         {alerts.map((a, i) => {
           const key = a.properties.nwsId ?? `${family}-${i}`;
           const selected = selectedId !== null && a.properties.nwsId === selectedId;
+          const hovered = hoveredAlertId !== null && a.properties.nwsId === hoveredAlertId;
           return (
             <AlertCard
               key={key}
               alert={a}
               selected={selected}
+              hovered={hovered}
+              onHoverAlert={onHoverAlert}
+              onLeaveAlert={onLeaveAlert}
               onSelect={onSelect}
               now={now}
               userState={userState}
@@ -196,6 +219,9 @@ export interface AlertsPanelProps {
   alerts: readonly WeatherAlert[];
   onSelect: (alert: WeatherAlert) => void;
   selectedId?: string | null;
+  hoveredAlertId?: string | null;
+  onHoverAlert?: (nwsId: string) => void;
+  onLeaveAlert?: () => void;
   /** Injectable "now" for stable relative-expiry rendering in tests. */
   now?: number;
   /**
@@ -211,6 +237,9 @@ export default function AlertsPanel({
   alerts,
   onSelect,
   selectedId = null,
+  hoveredAlertId = null,
+  onHoverAlert,
+  onLeaveAlert,
   now,
   userState,
 }: AlertsPanelProps) {
@@ -301,6 +330,9 @@ export default function AlertsPanel({
               family={family}
               alerts={famAlerts}
               selectedId={selectedId}
+              hoveredAlertId={hoveredAlertId}
+              onHoverAlert={onHoverAlert}
+              onLeaveAlert={onLeaveAlert}
               onSelect={onSelect}
               now={effectiveNow}
               userState={userState}
