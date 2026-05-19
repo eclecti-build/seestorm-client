@@ -130,12 +130,10 @@ function AlertCard({
         {url && (
           <a
             href={url}
-            target="_blank"
-            rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
             className="text-sky-300 hover:text-sky-200 underline underline-offset-2"
           >
-            weather.gov ↗
+            Details →
           </a>
         )}
       </div>

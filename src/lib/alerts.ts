@@ -138,20 +138,20 @@ export const FAMILY_ORDER: readonly AlertFamily[] = [
 // ---------------------------------------------------------------------------
 
 /**
- * Return the best outbound URL for an alert:
- *   1. Ingest-provided `url` (NWS CAP/ATOM feed link) if present.
- *   2. Deterministic fallback derived from `nws_id` via the public
- *      weather.gov API endpoint — stable, no auth, always resolvable.
+ * Return the best URL for an alert detail page:
+ *   1. Deterministic internal link derived from `nws_id` — points to
+ *      SeeStorm's own `/alert/{id}` detail page.
+ *   2. Ingest-provided `url` as a fallback (external NWS link).
  *   3. null when neither is available (UI hides the link).
  */
 export function resolveAlertUrl(params: {
   url?: string | null;
   nws_id?: string | null;
 }): string | null {
-  if (typeof params.url === 'string' && params.url.length > 0) return params.url;
   if (typeof params.nws_id === 'string' && params.nws_id.length > 0) {
-    return `https://api.weather.gov/alerts/${encodeURIComponent(params.nws_id)}`;
+    return `/alert/${encodeURIComponent(params.nws_id)}`;
   }
+  if (typeof params.url === 'string' && params.url.length > 0) return params.url;
   return null;
 }
 

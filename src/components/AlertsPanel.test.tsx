@@ -82,25 +82,13 @@ describe('<AlertsPanel />', () => {
     expect(onSelect).toHaveBeenCalledWith(tornado);
   });
 
-  it('renders an external link with target=_blank + rel=noopener,noreferrer', () => {
+  it('renders an internal details link pointing to /alert/{nwsId}', () => {
     const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
     render(<AlertsPanel alerts={[tornado]} onSelect={() => {}} now={FIXED_NOW} />);
 
-    const link = screen.getByRole('link', { name: /weather\.gov/i });
-    expect(link).toHaveAttribute('href', 'https://api.weather.gov/alerts/TO.1');
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-  });
-
-  it('prefers an ingest-provided url over the fallback', () => {
-    const tornado = build({
-      nws_id: 'TO.1',
-      event_type: 'Tornado Warning',
-      url: 'https://nws.example/alert/abc',
-    });
-    render(<AlertsPanel alerts={[tornado]} onSelect={() => {}} now={FIXED_NOW} />);
-    const link = screen.getByRole('link', { name: /weather\.gov/i });
-    expect(link).toHaveAttribute('href', 'https://nws.example/alert/abc');
+    const link = screen.getByRole('link', { name: /details/i });
+    expect(link).toHaveAttribute('href', '/alert/TO.1');
+    expect(link).not.toHaveAttribute('target');
   });
 
   it('clicking the link does not also fire the card onSelect', () => {
@@ -108,7 +96,7 @@ describe('<AlertsPanel />', () => {
     const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
     render(<AlertsPanel alerts={[tornado]} onSelect={onSelect} now={FIXED_NOW} />);
 
-    const link = screen.getByRole('link', { name: /weather\.gov/i });
+    const link = screen.getByRole('link', { name: /details/i });
     fireEvent.click(link);
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -134,7 +122,7 @@ describe('<AlertsPanel />', () => {
       geometry: STUB_GEOMETRY,
     };
     render(<AlertsPanel alerts={[bare]} onSelect={() => {}} now={FIXED_NOW} />);
-    expect(screen.queryByRole('link', { name: /weather\.gov/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /details/i })).not.toBeInTheDocument();
   });
 
   it('marks the currently selected card with aria-pressed=true', () => {

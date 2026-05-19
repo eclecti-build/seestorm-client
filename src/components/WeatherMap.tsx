@@ -1864,8 +1864,16 @@ export default function WeatherMap() {
               <div className="text-xs text-gray-400 max-h-40 overflow-y-auto">
                 {selectedAlert.properties.description}
               </div>
-              <div className="text-xs text-gray-500 mt-2">
-                Expires: {new Date(selectedAlert.properties.expires).toLocaleString()}
+              <div className="flex items-center justify-between text-xs text-gray-500 mt-2">
+                <span>Expires: {new Date(selectedAlert.properties.expires).toLocaleString()}</span>
+                {selectedAlert.properties.nwsId && (
+                  <a
+                    href={`/alert/${encodeURIComponent(selectedAlert.properties.nwsId)}`}
+                    className="text-sky-300 hover:text-sky-200 underline underline-offset-2"
+                  >
+                    Details →
+                  </a>
+                )}
               </div>
             </div>
           );
