@@ -110,6 +110,7 @@ function AlertDetail({ alert }: { alert: WeatherAlert }) {
   const { event, headline, description, severity, areaDesc, effective, expires } = alert.properties;
   const color = alert.properties.tornadoColor ?? colorForEvent(event);
   const tier = tierForEvent(event);
+  const tornado = alert.properties.tornado;
 
   return (
     <div>
@@ -123,6 +124,15 @@ function AlertDetail({ alert }: { alert: WeatherAlert }) {
         </span>
         <span className="text-xs text-[var(--ss-muted)]">{tier}</span>
       </div>
+
+      {alert.properties.tornadoAnnotation && (
+        <div
+          className="mb-4 rounded-md px-3 py-2 text-sm font-semibold"
+          style={{ backgroundColor: `${color}22`, color }}
+        >
+          {alert.properties.tornadoAnnotation}
+        </div>
+      )}
 
       <h1 className="text-xl font-semibold mb-4">{headline}</h1>
 
@@ -139,6 +149,28 @@ function AlertDetail({ alert }: { alert: WeatherAlert }) {
           <>
             <dt className="text-[var(--ss-muted)]">States</dt>
             <dd>{alert.properties.states.join(', ')}</dd>
+          </>
+        )}
+        {tornado && (
+          <>
+            <dt className="text-[var(--ss-muted)]">Detection</dt>
+            <dd>
+              {tornado.confirmed ? 'Observed / Confirmed' : 'Radar Indicated'}
+              {tornado.damage_threat !== 'BASE' &&
+                ` — ${tornado.damage_threat.charAt(0)}${tornado.damage_threat.slice(1).toLowerCase()} damage threat`}
+            </dd>
+            {tornado.source_text && (
+              <>
+                <dt className="text-[var(--ss-muted)]">Source</dt>
+                <dd>{tornado.source_text}</dd>
+              </>
+            )}
+          </>
+        )}
+        {alert.properties.nwsId && (
+          <>
+            <dt className="text-[var(--ss-muted)]">NWS ID</dt>
+            <dd className="font-mono text-xs">{alert.properties.nwsId}</dd>
           </>
         )}
       </dl>
@@ -158,16 +190,40 @@ function AlertDetail({ alert }: { alert: WeatherAlert }) {
       </Link>
 
       {alert.properties.nwsId && (
-        <div className="mt-8 pt-4 border-t border-[var(--ss-border)] text-xs text-[var(--ss-muted)]">
-          Source:{' '}
-          <a
-            href={`https://api.weather.gov/alerts/${encodeURIComponent(alert.properties.nwsId)}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[var(--ss-primary)] hover:text-[var(--ss-primary-hover)] underline underline-offset-2"
-          >
-            National Weather Service
-          </a>
+        <div className="mt-8 pt-4 border-t border-[var(--ss-border)] text-xs text-[var(--ss-muted)] space-y-2">
+          <p>
+            Data provided by the{' '}
+            <a
+              href="https://www.weather.gov"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--ss-primary)] hover:text-[var(--ss-primary-hover)] underline underline-offset-2"
+            >
+              National Weather Service
+            </a>{' '}
+            via the{' '}
+            <a
+              href="https://www.weather.gov/documentation/services-web-api"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--ss-primary)] hover:text-[var(--ss-primary-hover)] underline underline-offset-2"
+            >
+              NWS API
+            </a>
+            . The NWS API provides real-time access to alerts, forecasts, and observations from
+            National Weather Service offices across the United States. All NWS data is in the public
+            domain.
+          </p>
+          <p>
+            <a
+              href={`https://api.weather.gov/alerts/${encodeURIComponent(alert.properties.nwsId)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--ss-primary)] hover:text-[var(--ss-primary-hover)] underline underline-offset-2"
+            >
+              View raw NWS API response for this alert →
+            </a>
+          </p>
         </div>
       )}
     </div>
