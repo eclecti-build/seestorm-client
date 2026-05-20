@@ -76,6 +76,31 @@ export default function AboutPage() {
         </section>
 
         <section className="mb-10">
+          <h2 className="mb-2 text-base font-semibold">Source</h2>
+          <p className="text-[var(--ss-ink)]">
+            SeeStorm is open source under the MIT license. Code lives in two repositories:{' '}
+            <a
+              href="https://github.com/eclecti-build/seestorm-client"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--ss-primary)] hover:text-[var(--ss-primary-hover)]"
+            >
+              seestorm-client
+            </a>{' '}
+            (this site) and{' '}
+            <a
+              href="https://github.com/eclecti-build/seestorm-ingest"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--ss-primary)] hover:text-[var(--ss-primary-hover)]"
+            >
+              seestorm-ingest
+            </a>{' '}
+            (the NWS data poller). Issues, pull requests, and forks welcome.
+          </p>
+        </section>
+
+        <section className="mb-10">
           <h2 className="mb-2 text-base font-semibold">Report an issue</h2>
           <p className="text-[var(--ss-ink)]">
             Email{' '}
@@ -85,16 +110,25 @@ export default function AboutPage() {
             >
               sean@eclecti-build.com
             </a>{' '}
-            or open an issue on{' '}
+            or open an issue on GitHub:{' '}
             <a
               href="https://github.com/eclecti-build/seestorm-client/issues"
               target="_blank"
               rel="noopener noreferrer"
               className="text-[var(--ss-primary)] hover:text-[var(--ss-primary-hover)]"
             >
-              GitHub
-            </a>
-            .
+              front-end
+            </a>{' '}
+            for the site or map, or{' '}
+            <a
+              href="https://github.com/eclecti-build/seestorm-ingest/issues"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--ss-primary)] hover:text-[var(--ss-primary-hover)]"
+            >
+              data ingestion
+            </a>{' '}
+            for missing or stale alerts.
           </p>
         </section>
 
