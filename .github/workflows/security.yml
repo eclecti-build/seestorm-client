@@ -6,7 +6,7 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
       - name: install gitleaks
         # Use the OSS CLI directly; gitleaks-action@v2 requires a paid license for org repos
@@ -16,7 +16,7 @@ jobs:
           sudo mv gitleaks /usr/local/bin/gitleaks
       - name: gitleaks (blocking)
         run: gitleaks detect --source=. --redact
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with: { node-version: '20' }
       - run: npm ci
       # dependency advisories are tracked in the issue tracker; ratchet to blocking once cleaned
