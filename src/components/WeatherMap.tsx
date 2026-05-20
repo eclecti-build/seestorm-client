@@ -164,6 +164,8 @@ export default function WeatherMap() {
   const [allAlerts, setAllAlerts] = useState<WeatherAlert[]>([]);
   const [snapshotTime, setSnapshotTime] = useState<Date | null>(null);
   const [selectedAlert, setSelectedAlert] = useState<WeatherAlert | null>(null);
+  const [hoveredAlertId, setHoveredAlertId] = useState<string | null>(null);
+  const prevHoveredRef = useRef<string | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   // sliderValue ranges 0..history.length.
   // history.length (rightmost) means "live" — poll the current snapshot every 30s.
@@ -233,6 +235,8 @@ export default function WeatherMap() {
   const isLive = !isForecast && (history.length === 0 || sliderValue === history.length);
   // Minutes ahead of now for the current forecast frame (0 when not forecasting).
   const forecastOffsetMin = isForecast ? (sliderValue - history.length) * HRRR_STEP_MINUTES : 0;
+
+  const clearHoveredAlert = useCallback(() => setHoveredAlertId(null), []);
 
   // Select an alert AND pan/zoom the map to its geometry. Wired to the
   // AlertsPanel card click so the map jumps to the area the user wants to
@@ -1060,6 +1064,7 @@ export default function WeatherMap() {
       m.addSource('alerts', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
+        promoteId: 'nwsId',
       });
 
       // Per-event color expression — reused across all six tier layers below.
@@ -1109,27 +1114,37 @@ export default function WeatherMap() {
       const watchFilter = alertLayerFilter('Watch', new Set());
       const advisoryFilter = alertLayerFilter('Advisory', new Set());
 
-      // Fills — opacity is the primary signal of urgency.
+      // Fills — opacity is the primary signal of urgency. On hover the fill
+      // brightens (~2×) so the user can visually connect sidebar cards to
+      // map polygons. feature-state is set by the hoveredAlertId effect below.
+      const hoverFillOpacity = (base: number, hovered: number): ExpressionSpecification =>
+        [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false],
+          hovered,
+          base,
+        ] as unknown as ExpressionSpecification;
+
       m.addLayer({
         id: 'alert-fills-warning',
         type: 'fill',
         source: 'alerts',
         filter: warningFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.15 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': hoverFillOpacity(0.15, 0.35) },
       });
       m.addLayer({
         id: 'alert-fills-watch',
         type: 'fill',
         source: 'alerts',
         filter: watchFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.09 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': hoverFillOpacity(0.09, 0.22) },
       });
       m.addLayer({
         id: 'alert-fills-advisory',
         type: 'fill',
         source: 'alerts',
         filter: advisoryFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.04 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': hoverFillOpacity(0.04, 0.12) },
       });
 
       // County lines — drawn first (below state lines) so state borders win
@@ -1221,72 +1236,31 @@ export default function WeatherMap() {
       // regional zoom (5–7). By zoom 8 (county-level) the full-weight look
       // is restored. The fill still carries the urgency signal — this only
       // softens the outline contribution when pulled out.
-      const alertWarningWidth: ExpressionSpecification = [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        5,
-        1.2,
-        8,
-        3,
-        12,
-        3,
-      ] as unknown as ExpressionSpecification;
-      const alertWarningOpacity: ExpressionSpecification = [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        5,
-        0.45,
-        8,
-        0.9,
-        12,
-        0.9,
-      ] as unknown as ExpressionSpecification;
-      const alertWatchWidth: ExpressionSpecification = [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        5,
-        0.9,
-        8,
-        2,
-        12,
-        2,
-      ] as unknown as ExpressionSpecification;
-      const alertWatchOpacity: ExpressionSpecification = [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        5,
-        0.35,
-        8,
-        0.75,
-        12,
-        0.75,
-      ] as unknown as ExpressionSpecification;
-      const alertAdvisoryWidth: ExpressionSpecification = [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        5,
-        0.75,
-        8,
-        1.5,
-        12,
-        1.5,
-      ] as unknown as ExpressionSpecification;
-      const alertAdvisoryOpacity: ExpressionSpecification = [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        5,
-        0.28,
-        8,
-        0.6,
-        12,
-        0.6,
-      ] as unknown as ExpressionSpecification;
+      // Outline width/opacity use zoom interpolation. On hover the outline
+      // thickens and becomes fully opaque so the polygon border pops. The
+      // `case` wraps the zoom interpolation — hover wins with a constant
+      // boosted value, normal falls through to the zoom ramp.
+      const hoverLineWidth = (z5: number, z8: number, hovered: number): ExpressionSpecification =>
+        [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false],
+          hovered,
+          ['interpolate', ['linear'], ['zoom'], 5, z5, 8, z8, 12, z8],
+        ] as unknown as ExpressionSpecification;
+      const hoverLineOpacity = (z5: number, z8: number, hovered: number): ExpressionSpecification =>
+        [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false],
+          hovered,
+          ['interpolate', ['linear'], ['zoom'], 5, z5, 8, z8, 12, z8],
+        ] as unknown as ExpressionSpecification;
+
+      const alertWarningWidth = hoverLineWidth(1.2, 3, 5);
+      const alertWarningOpacity = hoverLineOpacity(0.45, 0.9, 1);
+      const alertWatchWidth = hoverLineWidth(0.9, 2, 4);
+      const alertWatchOpacity = hoverLineOpacity(0.35, 0.75, 1);
+      const alertAdvisoryWidth = hoverLineWidth(0.75, 1.5, 3);
+      const alertAdvisoryOpacity = hoverLineOpacity(0.28, 0.6, 1);
 
       m.addLayer({
         id: 'alert-outlines-warning',
@@ -1601,11 +1575,14 @@ export default function WeatherMap() {
             setSelectedAlert(e.features[0] as unknown as WeatherAlert);
           }
         });
-        m.on('mouseenter', layerId, () => {
+        m.on('mouseenter', layerId, (e) => {
           m.getCanvas().style.cursor = 'pointer';
+          const nwsId = e.features?.[0]?.properties?.nwsId;
+          if (typeof nwsId === 'string') setHoveredAlertId(nwsId);
         });
         m.on('mouseleave', layerId, () => {
           m.getCanvas().style.cursor = '';
+          setHoveredAlertId(null);
         });
       }
 
@@ -1689,6 +1666,25 @@ export default function WeatherMap() {
       mql?.removeEventListener('change', apply);
     };
   }, [mapReady, hasConfirmedTornado, isForecast, hiddenTiers]);
+
+  // Sync hoveredAlertId → MapLibre feature-state so fill/outline paint
+  // expressions react to hover. Lightweight: no data re-serialization, just
+  // a per-feature state flag toggle.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !mapReady) return;
+    try {
+      if (prevHoveredRef.current) {
+        m.setFeatureState({ source: 'alerts', id: prevHoveredRef.current }, { hover: false });
+      }
+      if (hoveredAlertId) {
+        m.setFeatureState({ source: 'alerts', id: hoveredAlertId }, { hover: true });
+      }
+    } catch {
+      // Feature may not exist yet (source data not loaded) — ignore.
+    }
+    prevHoveredRef.current = hoveredAlertId;
+  }, [hoveredAlertId, mapReady]);
 
   // Tick `now` every 30s so the "Xm ago" label advances without a full re-fetch.
   // Reads `serverNow()` instead of `Date.now()` so a clock-skewed user sees
@@ -1783,6 +1779,9 @@ export default function WeatherMap() {
           alerts={allAlerts}
           onSelect={focusAlert}
           selectedId={selectedAlert?.properties.nwsId ?? null}
+          hoveredAlertId={hoveredAlertId}
+          onHoverAlert={setHoveredAlertId}
+          onLeaveAlert={clearHoveredAlert}
           now={now}
           userState={userState ?? undefined}
         />
@@ -1865,8 +1864,16 @@ export default function WeatherMap() {
               <div className="text-xs text-gray-400 max-h-40 overflow-y-auto">
                 {selectedAlert.properties.description}
               </div>
-              <div className="text-xs text-gray-500 mt-2">
-                Expires: {new Date(selectedAlert.properties.expires).toLocaleString()}
+              <div className="flex items-center justify-between text-xs text-gray-500 mt-2">
+                <span>Expires: {new Date(selectedAlert.properties.expires).toLocaleString()}</span>
+                {selectedAlert.properties.nwsId && (
+                  <a
+                    href={`/alert/${encodeURIComponent(selectedAlert.properties.nwsId)}`}
+                    className="text-sky-300 hover:text-sky-200 underline underline-offset-2"
+                  >
+                    Details →
+                  </a>
+                )}
               </div>
             </div>
           );

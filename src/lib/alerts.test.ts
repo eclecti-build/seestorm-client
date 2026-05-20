@@ -202,24 +202,22 @@ describe('colorForEvent / priorityForEvent', () => {
 });
 
 describe('resolveAlertUrl', () => {
-  it('prefers an ingest-provided url over the fallback', () => {
+  it('prefers an internal /alert/ link when nws_id is available', () => {
     expect(resolveAlertUrl({ url: 'https://example.com/a', nws_id: 'KMKX.TO.W.0001' })).toBe(
-      'https://example.com/a',
+      '/alert/KMKX.TO.W.0001',
     );
   });
 
-  it('builds the fallback from nws_id when url is missing', () => {
-    expect(resolveAlertUrl({ nws_id: 'KMKX.TO.W.0001' })).toBe(
-      'https://api.weather.gov/alerts/KMKX.TO.W.0001',
-    );
+  it('builds the internal link from nws_id', () => {
+    expect(resolveAlertUrl({ nws_id: 'KMKX.TO.W.0001' })).toBe('/alert/KMKX.TO.W.0001');
   });
 
   it('url-encodes the nws_id', () => {
-    // Real NWS IDs contain dots and sometimes odd characters; encoding keeps
-    // us safe against ids that add `:` or `/` in future product variants.
-    expect(resolveAlertUrl({ nws_id: 'weird/id?x=1' })).toBe(
-      'https://api.weather.gov/alerts/weird%2Fid%3Fx%3D1',
-    );
+    expect(resolveAlertUrl({ nws_id: 'weird/id?x=1' })).toBe('/alert/weird%2Fid%3Fx%3D1');
+  });
+
+  it('falls back to ingest-provided url when nws_id is missing', () => {
+    expect(resolveAlertUrl({ url: 'https://example.com/a' })).toBe('https://example.com/a');
   });
 
   it('returns null when neither url nor nws_id is present', () => {
@@ -235,11 +233,11 @@ describe('ingestToWeatherAlert', () => {
     expect(wa.properties.event).toBe('Tornado Warning');
     expect(wa.properties.areaDesc).toBe('Dane, WI');
     expect(wa.properties.nwsId).toBe('KMKX.TO.W.0007');
-    expect(wa.properties.url).toBe('https://api.weather.gov/alerts/KMKX.TO.W.0007');
+    expect(wa.properties.url).toBe('/alert/KMKX.TO.W.0007');
   });
 
-  it('uses the ingest-provided url when present', () => {
-    const wa = ingestToWeatherAlert(ingest({ url: 'https://nws.example/a' }));
+  it('falls back to ingest-provided url when nws_id is empty', () => {
+    const wa = ingestToWeatherAlert(ingest({ nws_id: '', url: 'https://nws.example/a' }));
     expect(wa.properties.url).toBe('https://nws.example/a');
   });
 
