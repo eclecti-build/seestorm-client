@@ -1,65 +1,99 @@
 /**
- * build-zip-data.ts — regenerate `public/data/zip-greatlakes.json`.
+ * build-zip-data.ts — regenerate `public/data/zip-us.json`.
  *
- * Pulls the US Census 2020 ZCTA Gazetteer (public domain), filters down to
- * the 9 SeeStorm states (MN, WI, IA, IL, IN, MI, OH, PA, NY — GL 8 + Iowa),
- * and writes the compact `{[zip]: {lat, lon, state, county}}` shape consumed
+ * Pulls the US Census 2020 ZCTA Gazetteer (public domain), resolves each
+ * ZCTA to a state via point-in-polygon against the county shapefile, and
+ * writes the compact `{[zip]: {lat, lon, state, county}}` shape consumed
  * by `src/lib/zipLookup.ts`.
  *
- * Why a script instead of build-time generation:
- *   - The Gazetteer is ~10 MB compressed and we only need ~80 KB of it.
- *     Running this manually keeps `npm install` light and CI fast.
- *   - ZCTAs change once a year at most. There's no reason to rebuild on
- *     every commit.
+ * Covers all 50 US states + DC + territories that have ZCTA entries.
  *
  * Usage (one-time, when refreshing data):
  *   1. Download the Census ZCTA Gazetteer (~3 MB zipped):
  *        curl -sSL -o tmp/gaz.zip \
  *          https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2020_Gazetteer/2020_Gaz_zcta_national.zip
  *        unzip -o tmp/gaz.zip -d tmp/
- *   2. Download the Census county shapefile (only if you want county
- *      names attached — optional, see note below):
- *        https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_county_500k.zip
+ *   2. Download the Census county shapefile (for state+county assignment):
+ *        curl -sSL -o tmp/cb_2020_us_county_500k.zip \
+ *          https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_county_500k.zip
+ *        unzip -o tmp/cb_2020_us_county_500k.zip -d tmp/
  *   3. Run:
  *        npx tsx scripts/build-zip-data.ts
  *
- * The Gazetteer file is TAB-separated text with a header row. Columns:
- *   GEOID    — 5-digit ZCTA (acts as the ZIP key for this lookup)
- *   ALAND, AWATER, ALAND_SQMI, AWATER_SQMI
- *   INTPTLAT — internal point latitude  (centroid)
- *   INTPTLONG— internal point longitude
- *
- * The national ZCTA file does NOT carry state — ZCTAs cross state lines.
- * To attach a state we cross-reference each ZCTA's INTPT coordinates
- * against the bundled `public/geo/us-states.geojson` (ships in-repo).
- *
- * County attachment is OPTIONAL. The runtime only reads `state` from each
- * record; `county` is a string (may be empty) kept for future display.
- * If the county shapefile is absent, emit `county: ''` — the checked-in
- * `public/data/zip-greatlakes.json` is currently state-only for this
- * reason, and `zipData.test.ts` enforces state coverage in CI.
- *
- * Both source files are public-domain Census products. URLs:
- *   https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2020_Gazetteer/2020_Gaz_zcta_national.zip
- *   https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_county_500k.zip
- *
- * The script intentionally does NOT auto-download (proxies, retry logic,
- * checksumming all add noise) — fetch them once into `tmp/` and re-run.
+ * Both source files are public-domain Census products.
  */
 
 import { createReadStream } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
-// turf is already a dependency; we use it for point-in-polygon to assign
-// county/state to each ZCTA centroid.
 import * as turf from '@turf/turf';
+import * as shapefile from 'shapefile';
 
-const TARGET_STATES = new Set(['MN', 'WI', 'IA', 'IL', 'IN', 'MI', 'OH', 'PA', 'NY']);
+// All FIPS state codes → USPS.
+const FIPS_TO_USPS: Record<string, string> = {
+  '01': 'AL',
+  '02': 'AK',
+  '04': 'AZ',
+  '05': 'AR',
+  '06': 'CA',
+  '08': 'CO',
+  '09': 'CT',
+  '10': 'DE',
+  '11': 'DC',
+  '12': 'FL',
+  '13': 'GA',
+  '15': 'HI',
+  '16': 'ID',
+  '17': 'IL',
+  '18': 'IN',
+  '19': 'IA',
+  '20': 'KS',
+  '21': 'KY',
+  '22': 'LA',
+  '23': 'ME',
+  '24': 'MD',
+  '25': 'MA',
+  '26': 'MI',
+  '27': 'MN',
+  '28': 'MS',
+  '29': 'MO',
+  '30': 'MT',
+  '31': 'NE',
+  '32': 'NV',
+  '33': 'NH',
+  '34': 'NJ',
+  '35': 'NM',
+  '36': 'NY',
+  '37': 'NC',
+  '38': 'ND',
+  '39': 'OH',
+  '40': 'OK',
+  '41': 'OR',
+  '42': 'PA',
+  '44': 'RI',
+  '45': 'SC',
+  '46': 'SD',
+  '47': 'TN',
+  '48': 'TX',
+  '49': 'UT',
+  '50': 'VT',
+  '51': 'VA',
+  '53': 'WA',
+  '54': 'WV',
+  '55': 'WI',
+  '56': 'WY',
+  '60': 'AS',
+  '66': 'GU',
+  '69': 'MP',
+  '72': 'PR',
+  '78': 'VI',
+};
 
 const GAZETTEER_PATH = resolve('tmp/2020_Gaz_zcta_national.txt');
-const COUNTIES_GEOJSON_PATH = resolve('tmp/cb_2020_us_county_500k.geojson');
-const OUTPUT_PATH = resolve('public/data/zip-greatlakes.json');
+const SHP_PATH = resolve('tmp/cb_2020_us_county_500k.shp');
+const DBF_PATH = resolve('tmp/cb_2020_us_county_500k.dbf');
+const OUTPUT_PATH = resolve('public/data/zip-us.json');
 
 interface ZcRow {
   zip: string;
@@ -68,23 +102,10 @@ interface ZcRow {
 }
 
 interface CountyFeatureProps {
-  STATEFP: string; // FIPS state code, e.g. "55" for WI
+  STATEFP: string;
   NAME: string;
   STATE_NAME?: string;
 }
-
-// FIPS state code → USPS code, for the 9 target states (GL 8 + Iowa).
-const FIPS_TO_USPS: Record<string, string> = {
-  '17': 'IL',
-  '18': 'IN',
-  '19': 'IA',
-  '26': 'MI',
-  '27': 'MN',
-  '36': 'NY',
-  '39': 'OH',
-  '42': 'PA',
-  '55': 'WI',
-};
 
 async function readGazetteer(path: string): Promise<ZcRow[]> {
   const rows: ZcRow[] = [];
@@ -93,9 +114,8 @@ async function readGazetteer(path: string): Promise<ZcRow[]> {
   for await (const line of rl) {
     if (firstLine) {
       firstLine = false;
-      continue; // header
+      continue;
     }
-    // Tab-separated; columns: GEOID, ALAND, AWATER, ALAND_SQMI, AWATER_SQMI, INTPTLAT, INTPTLONG
     const parts = line.split('\t').map((p) => p.trim());
     if (parts.length < 7) continue;
     const zip = parts[0];
@@ -113,10 +133,8 @@ interface CountyHit {
 }
 
 function buildCountyResolver(
-  fc: GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon, CountyFeatureProps>,
+  features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon, CountyFeatureProps>[],
 ): (lat: number, lon: number) => CountyHit | null {
-  // Filter to target states once so per-point lookup is cheaper.
-  const features = fc.features.filter((f) => FIPS_TO_USPS[f.properties.STATEFP]);
   return (lat, lon) => {
     const pt = turf.point([lon, lat]);
     for (const f of features) {
@@ -135,31 +153,46 @@ function buildCountyResolver(
   };
 }
 
+async function readCountyShapefile(): Promise<
+  GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon, CountyFeatureProps>[]
+> {
+  const source = await shapefile.open(SHP_PATH, DBF_PATH);
+  const features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon, CountyFeatureProps>[] =
+    [];
+  while (true) {
+    const result = await source.read();
+    if (result.done) break;
+    const feat = result.value as GeoJSON.Feature;
+    const props = feat.properties as Record<string, unknown> | null;
+    if (!props || typeof props.STATEFP !== 'string' || typeof props.NAME !== 'string') continue;
+    if (!FIPS_TO_USPS[props.STATEFP as string]) continue;
+    const geom = feat.geometry;
+    if (!geom || (geom.type !== 'Polygon' && geom.type !== 'MultiPolygon')) continue;
+    features.push(
+      feat as GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon, CountyFeatureProps>,
+    );
+  }
+  return features;
+}
+
 async function main(): Promise<void> {
   console.log('Reading gazetteer:', GAZETTEER_PATH);
   const zcs = await readGazetteer(GAZETTEER_PATH);
   console.log(`  ${zcs.length} ZCTAs`);
 
-  console.log('Reading counties:', COUNTIES_GEOJSON_PATH);
-  // readFile + JSON.parse avoids Windows ESM url-scheme limitation where
-  // `import('C:/...')` errors with ERR_UNSUPPORTED_ESM_URL_SCHEME. Same
-  // input, same parsed shape — just no dynamic-import round trip.
-  const countiesRaw = await readFile(COUNTIES_GEOJSON_PATH, 'utf8');
-  const counties = JSON.parse(countiesRaw) as GeoJSON.FeatureCollection<
-    GeoJSON.Polygon | GeoJSON.MultiPolygon,
-    CountyFeatureProps
-  >;
-  const resolveCounty = buildCountyResolver(counties);
+  console.log('Reading county shapefile:', SHP_PATH);
+  const countyFeatures = await readCountyShapefile();
+  console.log(`  ${countyFeatures.length} county features`);
+  const resolveCounty = buildCountyResolver(countyFeatures);
 
   const out: Record<string, { lat: number; lon: number; state: string; county: string }> = {};
   for (const { zip, lat, lon } of zcs) {
     const hit = resolveCounty(lat, lon);
     if (!hit) continue;
-    if (!TARGET_STATES.has(hit.state)) continue;
     out[zip] = { lat, lon, state: hit.state, county: hit.county };
   }
 
-  console.log(`  ${Object.keys(out).length} ZCTAs in target states`);
+  console.log(`  ${Object.keys(out).length} ZCTAs resolved`);
 
   await writeFile(OUTPUT_PATH, JSON.stringify(out));
   console.log('Wrote', OUTPUT_PATH);

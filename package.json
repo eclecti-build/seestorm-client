@@ -25,6 +25,9 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker/tsconfig.json",
     "verify": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build",
+    "build:geo": "tsx scripts/build-county-data.ts",
+    "build:zip": "tsx scripts/build-zip-data.ts",
+    "build:data": "npm run build:geo && npm run build:zip",
     "deploy": "wrangler deploy",
     "deploy:preview": "wrangler versions upload",
     "cf:dev": "wrangler dev"

@@ -2,36 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { USPS_TO_FIPS, FIPS_TO_USPS, uspsToFips, fipsToUsps } from './stateFips';
 
 describe('USPS_TO_FIPS table', () => {
-  it('covers exactly the 9 Great Lakes + Iowa states', () => {
-    expect(Object.keys(USPS_TO_FIPS).sort()).toEqual([
-      'IA',
-      'IL',
-      'IN',
-      'MI',
-      'MN',
-      'NY',
-      'OH',
-      'PA',
-      'WI',
-    ]);
-  });
-
-  it('uses the canonical Census FIPS codes', () => {
-    // These values are stable Census state FIPS codes — if any of these ever
-    // diverge from the bundled greatlakes-counties.geojson the county-line
-    // filter silently breaks for that state. The matching test for the
-    // GeoJSON shape lives in `countyGeometry.test.ts`.
-    expect(USPS_TO_FIPS).toEqual({
-      IA: '19',
-      IL: '17',
-      IN: '18',
-      MI: '26',
-      MN: '27',
-      NY: '36',
-      OH: '39',
-      PA: '42',
-      WI: '55',
-    });
+  it('covers all 50 states + DC + 5 territories (56 entries)', () => {
+    expect(Object.keys(USPS_TO_FIPS)).toHaveLength(56);
+    expect(USPS_TO_FIPS['WI']).toBe('55');
+    expect(USPS_TO_FIPS['CA']).toBe('06');
+    expect(USPS_TO_FIPS['TX']).toBe('48');
+    expect(USPS_TO_FIPS['DC']).toBe('11');
+    expect(USPS_TO_FIPS['PR']).toBe('72');
+    expect(USPS_TO_FIPS['VI']).toBe('78');
   });
 
   it('is round-trippable through FIPS_TO_USPS', () => {
@@ -50,6 +28,7 @@ describe('uspsToFips', () => {
   it('returns the FIPS code for a known USPS code', () => {
     expect(uspsToFips('WI')).toBe('55');
     expect(uspsToFips('IL')).toBe('17');
+    expect(uspsToFips('CA')).toBe('06');
   });
 
   it('is case-insensitive', () => {
@@ -57,9 +36,9 @@ describe('uspsToFips', () => {
     expect(uspsToFips('Wi')).toBe('55');
   });
 
-  it('returns null for unsupported / unknown codes', () => {
-    expect(uspsToFips('CA')).toBeNull(); // out of SeeStorm scope
+  it('returns null for unknown codes', () => {
     expect(uspsToFips('XX')).toBeNull();
+    expect(uspsToFips('ZZ')).toBeNull();
   });
 
   it('returns null for null/undefined/empty input', () => {
@@ -73,11 +52,12 @@ describe('fipsToUsps', () => {
   it('returns the USPS code for a known FIPS code', () => {
     expect(fipsToUsps('55')).toBe('WI');
     expect(fipsToUsps('36')).toBe('NY');
+    expect(fipsToUsps('06')).toBe('CA');
   });
 
   it('returns null for unknown FIPS codes', () => {
-    expect(fipsToUsps('06')).toBeNull(); // California — out of scope
     expect(fipsToUsps('99')).toBeNull();
+    expect(fipsToUsps('03')).toBeNull();
   });
 
   it('returns null for null/undefined/empty input', () => {
