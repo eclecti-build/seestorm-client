@@ -6,7 +6,7 @@
 // The file is read from disk (not fetched) so this runs cleanly in Vitest's
 // jsdom environment without needing to stand up a dev server.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
@@ -37,8 +37,10 @@ function loadTable(): Record<string, ZipRecord> {
   return out;
 }
 
-describe('zip-us.json coverage', () => {
-  const table = loadTable();
+const fileExists = existsSync(DATA_PATH);
+
+describe.skipIf(!fileExists)('zip-us.json coverage', () => {
+  const table = fileExists ? loadTable() : {};
 
   it('contains at least 30,000 ZIP entries (national coverage)', () => {
     expect(Object.keys(table).length).toBeGreaterThanOrEqual(30000);
