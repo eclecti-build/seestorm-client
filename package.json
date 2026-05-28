@@ -16,6 +16,7 @@
   },
   "scripts": {
     "dev": "next dev -p 6006",
+    "prebuild": "node scripts/ensure-data.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
