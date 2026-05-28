@@ -520,10 +520,8 @@ export default function WeatherMap() {
       mapInstance.setFilter(layerId, ['==', ['get', 'STATE'], '__none__']);
     }
 
+    // eslint-disable-next-line react-hooks/immutability -- cross-effect callback channel
     applyUserCountyHighlightRef.current = applyHighlight;
-    // Run once on wire-up so a hydrated location resolves immediately
-    // (the syncFromStorage path also calls this, but that may have run
-    // before the map was ready).
     applyHighlight();
 
     return () => {
