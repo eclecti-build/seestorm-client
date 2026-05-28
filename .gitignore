@@ -54,10 +54,19 @@ next-env.d.ts
 # Codex review artifacts
 .codex-review/
 
-# One-shot data regeneration workspace (see scripts/build-zip-data.ts).
-# The Census Gazetteer / county shapefiles live here when refreshing
-# public/data/zip-greatlakes.json. Not needed at runtime or in CI.
+# One-shot data regeneration workspace (see scripts/build-county-data.ts,
+# scripts/build-zip-data.ts). Census shapefiles / gazetteers live here
+# when refreshing public/geo/counties/ and public/data/zip-us.json.
 /tmp/
+
+# Ephemeral file written by dev-up.sh when seeding local R2.
+.r2-seed-tmp.json
+
+# Generated data files — built from Census source data via the scripts
+# above. Too large to commit (~25 MB counties, ~2.4 MB ZIP table).
+# Regenerate with: npm run build:geo && npm run build:zip
+/public/geo/counties/
+/public/data/zip-us.json
 .claude/sessions/
 
 # Local validation fixtures. In production `/v1/*` is served by the Worker

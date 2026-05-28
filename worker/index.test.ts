@@ -378,10 +378,10 @@ describe('parsePerStateCode', () => {
 // Per-state allowlist — GET /v1/active-events/{STATE}.json
 // ---------------------------------------------------------------------------
 //
-// The Worker MUST gate per-state requests on the explicit Great Lakes
-// allowlist BEFORE reading from R2. This keeps the public API surface
+// The Worker MUST gate per-state requests on the explicit allowlist
+// BEFORE reading from R2. This keeps the public API surface
 // code-reviewable (client CLAUDE.md's PUBLIC_SNAPSHOTS rule) and avoids
-// paying an R2 class-B op per out-of-coverage probe.
+// paying an R2 class-B op per invalid state probe.
 //
 // The allowlist and the ingest service's NWS_AREA deployment env are the
 // two places that define "what states are live" — they MUST stay in sync
@@ -437,23 +437,15 @@ function perStateFakeEnv(presentStates: readonly string[]): PerStateFakeBucket {
   return tracker;
 }
 
-describe('GET /v1/active-events/{STATE}.json — Great Lakes allowlist', () => {
-  it('contains exactly the 9 Great Lakes + Iowa states (canary — adding a state is a Worker PR)', () => {
-    // Tripwire for the contract in CLAUDE.md: the allowlist must only
-    // expand through a code-reviewed Worker change, coordinated with
-    // ingest's NWS_AREA. If this test starts failing, confirm the ingest
-    // PR is paired with the Worker PR before updating the expected set.
-    expect([...PUBLIC_PER_STATE_SNAPSHOTS].sort()).toEqual([
-      'IA',
-      'IL',
-      'IN',
-      'MI',
-      'MN',
-      'NY',
-      'OH',
-      'PA',
-      'WI',
-    ]);
+describe('GET /v1/active-events/{STATE}.json — per-state allowlist', () => {
+  it('contains all 50 states + DC + 5 territories (56 entries)', () => {
+    expect(PUBLIC_PER_STATE_SNAPSHOTS.size).toBe(56);
+    expect(PUBLIC_PER_STATE_SNAPSHOTS.has('WI')).toBe(true);
+    expect(PUBLIC_PER_STATE_SNAPSHOTS.has('CA')).toBe(true);
+    expect(PUBLIC_PER_STATE_SNAPSHOTS.has('TX')).toBe(true);
+    expect(PUBLIC_PER_STATE_SNAPSHOTS.has('PR')).toBe(true);
+    expect(PUBLIC_PER_STATE_SNAPSHOTS.has('VI')).toBe(true);
+    expect(PUBLIC_PER_STATE_SNAPSHOTS.has('ZZ' as never)).toBe(false);
   });
 
   it('serves 200 with the R2 body for an allowlisted state that is present in R2', async () => {
@@ -486,21 +478,18 @@ describe('GET /v1/active-events/{STATE}.json — Great Lakes allowlist', () => {
   });
 
   it('returns 404 WITHOUT calling R2 for a well-formed but non-allowlisted state', async () => {
-    // The scaling invariant: an out-of-coverage probe (CA, TX, FL, ...)
-    // must short-circuit before the R2 call. Asserting call count = 0
-    // is the bright line separating "allowlisted but empty" from
-    // "not allowlisted at all" behavior.
-    const tracker = perStateFakeEnv(['WI', 'IL', 'IN', 'MI', 'MN', 'NY', 'OH', 'PA']);
+    // The scaling invariant: an invalid-but-well-formed code (ZZ) must
+    // short-circuit before the R2 call. Asserting call count = 0 is
+    // the bright line separating "allowlisted but empty" from "not
+    // allowlisted at all" behavior.
+    const tracker = perStateFakeEnv(['WI']);
     const res = await worker.fetch(
-      new Request('https://seestorm.example/v1/active-events/CA.json'),
+      new Request('https://seestorm.example/v1/active-events/ZZ.json'),
       tracker.env,
     );
     expect(res.status).toBe(404);
     expect(tracker.getCalls).toBe(0);
     const text = await res.text();
-    // Small distinguishable body so future debug observations tell this
-    // path apart from the generic "Not found" at a glance. Still plain
-    // text, still 404 — the wire shape is identical from the client's POV.
     expect(text).toBe('state not available');
   });
 
@@ -534,7 +523,7 @@ describe('GET /v1/active-events/{STATE}.json — Great Lakes allowlist', () => {
     // returning a bare Response without running it through notFound().
     const tracker = perStateFakeEnv([]);
     const res = await worker.fetch(
-      new Request('https://seestorm.example/v1/active-events/CA.json'),
+      new Request('https://seestorm.example/v1/active-events/ZZ.json'),
       tracker.env,
     );
     expect(res.status).toBe(404);

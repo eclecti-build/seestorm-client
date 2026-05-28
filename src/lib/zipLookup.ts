@@ -1,10 +1,9 @@
-// ZIP-to-coordinates lookup against a bundled JSON table for the 9 SeeStorm
-// states (MN, WI, IA, IL, IN, MI, OH, PA, NY — Great Lakes 8 + Iowa).
+// ZIP-to-coordinates lookup against a bundled JSON table covering all US
+// states, DC, and territories.
 //
-// The JSON is loaded via dynamic `import()` so it isn't pulled into the
-// initial JS bundle — it only ships down the wire when a user actually
-// types a ZIP into the LocationBanner. Subsequent lookups hit the in-memory
-// promise cache, so repeated lookups don't refetch.
+// The JSON is fetched lazily so it isn't pulled into the initial JS bundle
+// — it only ships down the wire when a user actually types a ZIP into the
+// LocationChip. Subsequent lookups hit the in-memory promise cache.
 
 export interface ZipRecord {
   lat: number;
@@ -34,7 +33,7 @@ async function loadTable(): Promise<ZipTable> {
       // fetch() the static asset rather than a Webpack/Turbopack `import` of
       // the JSON — keeps the file out of the JS bundle entirely (it lives in
       // `public/data/`) and lets the browser/CDN cache it independently.
-      const res = await fetch('/data/zip-greatlakes.json');
+      const res = await fetch('/data/zip-us.json');
       if (!res.ok) {
         throw new Error(`ZIP table fetch failed: ${res.status}`);
       }
@@ -68,9 +67,8 @@ export function normalizeZip(input: string): string | null {
 }
 
 /**
- * Look up a ZIP code in the Great Lakes table.
- * Returns null when the ZIP isn't in the bundled set (out-of-region or
- * malformed input).
+ * Look up a ZIP code in the national table.
+ * Returns null when the ZIP isn't in the bundled set or is malformed.
  */
 export async function lookupZip(zip: string): Promise<ZipRecord | null> {
   const normalized = normalizeZip(zip);

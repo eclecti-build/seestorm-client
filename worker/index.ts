@@ -58,25 +58,69 @@ const TIMESTAMP_RE = /^\d{8}T\d{6}Z$/;
 const STATE_CODE_RE = /^[A-Z]{2}$/;
 
 // Explicit allowlist of per-state snapshot keys. Matches the ingest service's
-// configured NWS_AREA for the Great Lakes + Iowa deployment. Adding a state
-// here must be coordinated with ingest's NWS_AREA env so clients don't see
-// 404s. National rollout = add the remaining USPS codes here.
+// configured NWS_AREA. Adding a state here must be coordinated with ingest's
+// NWS_AREA env so clients don't see 404s.
 //
 // This is the PUBLIC_SNAPSHOTS contract called out in CLAUDE.md: public API
 // surface is versioned and the set of snapshot keys served is code-reviewable,
-// not regex-derived. Regex-only acceptance predated multi-state ingest; with
-// 9 concrete states now in production (GL 8 + IA) the surface is worth
-// making explicit.
+// not regex-derived.
 export const PUBLIC_PER_STATE_SNAPSHOTS = new Set([
-  'WI',
+  'AL',
+  'AK',
+  'AZ',
+  'AR',
+  'CA',
+  'CO',
+  'CT',
+  'DC',
+  'DE',
+  'FL',
+  'GA',
+  'HI',
+  'ID',
   'IL',
   'IN',
+  'IA',
+  'KS',
+  'KY',
+  'LA',
+  'ME',
+  'MD',
+  'MA',
   'MI',
   'MN',
+  'MS',
+  'MO',
+  'MT',
+  'NE',
+  'NV',
+  'NH',
+  'NJ',
+  'NM',
   'NY',
+  'NC',
+  'ND',
   'OH',
+  'OK',
+  'OR',
   'PA',
-  'IA',
+  'RI',
+  'SC',
+  'SD',
+  'TN',
+  'TX',
+  'UT',
+  'VT',
+  'VA',
+  'WA',
+  'WV',
+  'WI',
+  'WY',
+  'AS',
+  'GU',
+  'MP',
+  'PR',
+  'VI',
 ] as const);
 
 /** Union of USPS codes currently served by the per-state route. */

@@ -1,5 +1,4 @@
-// USPS ↔ FIPS state-code mapping for the 9 states SeeStorm covers
-// (Great Lakes 8 + Iowa).
+// USPS ↔ FIPS state-code mapping for all US states, DC, and territories.
 //
 // The runtime carries USPS codes everywhere ('WI', 'IL', etc. — see
 // `userLocation.ts`, `LocationChip.tsx`, `alerts.ts`). The bundled county
@@ -11,22 +10,70 @@
 // and the build script without pulling React or MapLibre into either.
 
 /**
- * USPS → FIPS for the 9 supported states. Other USPS codes return undefined.
+ * USPS → FIPS for all 50 states + DC + 5 territories.
  */
 export const USPS_TO_FIPS: Readonly<Record<string, string>> = Object.freeze({
-  IA: '19',
+  AL: '01',
+  AK: '02',
+  AZ: '04',
+  AR: '05',
+  CA: '06',
+  CO: '08',
+  CT: '09',
+  DC: '11',
+  DE: '10',
+  FL: '12',
+  GA: '13',
+  HI: '15',
+  ID: '16',
   IL: '17',
   IN: '18',
+  IA: '19',
+  KS: '20',
+  KY: '21',
+  LA: '22',
+  ME: '23',
+  MD: '24',
+  MA: '25',
   MI: '26',
   MN: '27',
+  MS: '28',
+  MO: '29',
+  MT: '30',
+  NE: '31',
+  NV: '32',
+  NH: '33',
+  NJ: '34',
+  NM: '35',
   NY: '36',
+  NC: '37',
+  ND: '38',
   OH: '39',
+  OK: '40',
+  OR: '41',
   PA: '42',
+  RI: '44',
+  SC: '45',
+  SD: '46',
+  TN: '47',
+  TX: '48',
+  UT: '49',
+  VT: '50',
+  VA: '51',
+  WA: '53',
+  WV: '54',
   WI: '55',
+  WY: '56',
+  // Territories
+  AS: '60',
+  GU: '66',
+  MP: '69',
+  PR: '72',
+  VI: '78',
 });
 
 /**
- * FIPS → USPS for the 9 supported states. Useful when reading `STATE` off a
+ * FIPS → USPS for all supported areas. Useful when reading `STATE` off a
  * county feature for logging or debug surfaces.
  */
 export const FIPS_TO_USPS: Readonly<Record<string, string>> = Object.freeze(
@@ -34,8 +81,8 @@ export const FIPS_TO_USPS: Readonly<Record<string, string>> = Object.freeze(
 );
 
 /**
- * Convert a USPS code to FIPS. Returns null for unknown codes (out of
- * SeeStorm scope) so callers can decide to skip a filter rather than crash.
+ * Convert a USPS code to FIPS. Returns null for unknown codes so callers
+ * can decide to skip a filter rather than crash.
  */
 export function uspsToFips(usps: string | null | undefined): string | null {
   if (!usps) return null;

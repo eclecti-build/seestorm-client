@@ -196,12 +196,12 @@ describe('buildCountyLookup', () => {
         { type: 'Feature', properties: { NAME: 'Dane', STATE: '55' }, geometry: null },
         { type: 'Feature', properties: { STATE: '55' }, geometry: DANE_POLY },
         { type: 'Feature', properties: { NAME: 'Dane' }, geometry: DANE_POLY }, // no STATE
-        { type: 'Feature', properties: { NAME: 'Dane', STATE: '06' }, geometry: DANE_POLY }, // CA, out of scope
+        { type: 'Feature', properties: { NAME: 'Dane', STATE: '99' }, geometry: DANE_POLY }, // unknown FIPS
       ],
     } as unknown as GeoJSON.FeatureCollection;
     const lookup = buildCountyLookup(fc);
     expect(lookup('Dane', 'WI')).toBeNull();
-    expect(lookup('Dane', 'CA')).toBeNull();
+    expect(lookup('Dane', 'XX')).toBeNull();
   });
 });
 

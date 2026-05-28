@@ -66,10 +66,10 @@ describe('fetchGeoSuggestion', () => {
     expect(result?.state).toBe('WI');
   });
 
-  it('returns null when the inferred state is not in the 9-state coverage', async () => {
+  it('returns null when the inferred state is not a recognized US code', async () => {
     const fetchImpl = vi
       .fn()
-      .mockResolvedValue(jsonResponse({ zip: '94102', state: 'CA', lat: 37.77, lon: -122.42 }));
+      .mockResolvedValue(jsonResponse({ zip: '00000', state: 'XX', lat: 0, lon: 0 }));
     const result = await fetchGeoSuggestion({ fetchImpl, now: fixedNow });
     expect(result).toBeNull();
   });
@@ -164,10 +164,10 @@ describe('applyGeoDefaultIfNeeded', () => {
     }
   });
 
-  it('reports kind=none and persists nothing when the inferred state is unsupported', async () => {
+  it('reports kind=none and persists nothing when the inferred state is unrecognized', async () => {
     const fetchImpl = vi
       .fn()
-      .mockResolvedValue(jsonResponse({ zip: '94102', state: 'CA', lat: 37.77, lon: -122.42 }));
+      .mockResolvedValue(jsonResponse({ zip: '00000', state: 'XX', lat: 0, lon: 0 }));
     const outcome = await applyGeoDefaultIfNeeded({ fetchImpl, now: fixedNow });
     expect(outcome.kind).toBe('none');
     expect(getUserLocation()).toBeNull();

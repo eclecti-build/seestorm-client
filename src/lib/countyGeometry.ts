@@ -3,8 +3,7 @@
 // with no polygon — only `area_desc` and sometimes UGC codes. Until the
 // ingest contract carries structured UGC, we parse `area_desc` county names
 // and union the matching county polygons from the bundled
-// `public/geo/greatlakes-counties.geojson` (covers all 9 supported states:
-// the Great Lakes 8 plus Iowa).
+// per-state county GeoJSON files in `public/geo/counties/`.
 //
 // The lookup is keyed by (state, name) because county names repeat across
 // states — `Washington` alone exists in IA, MN, NY, OH, PA, WI, etc., and
