@@ -24,7 +24,7 @@
  */
 
 import { createReadStream } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import * as turf from '@turf/turf';
@@ -194,6 +194,7 @@ async function main(): Promise<void> {
 
   console.log(`  ${Object.keys(out).length} ZCTAs resolved`);
 
+  await mkdir(resolve(OUTPUT_PATH, '..'), { recursive: true });
   await writeFile(OUTPUT_PATH, JSON.stringify(out));
   console.log('Wrote', OUTPUT_PATH);
 }
