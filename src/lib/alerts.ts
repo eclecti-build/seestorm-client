@@ -12,6 +12,7 @@
 //     without polygon geometry.
 
 import { booleanPointInPolygon, point as turfPoint } from '@turf/turf';
+import type { ColorVisionMode } from './colorVisionMode';
 
 // ---------------------------------------------------------------------------
 // Palette
@@ -58,6 +59,37 @@ export const WARNING_COLORS: Record<string, string> = {
 
 export const FALLBACK_COLOR = '#888888';
 
+// Colorblind-safe palette (opt-in). One Okabe–Ito (color-universal) hue per
+// product family; within-family Warning/Watch/Advisory stays encoded by the
+// fill-opacity + dashed/solid stroke the map already applies, which is more
+// robust for CVD than today's per-tier hue mix. Keyed by the same event
+// strings as WARNING_COLORS so the selectors are symmetric.
+export const WARNING_COLORS_CB: Record<string, string> = {
+  'Tornado Warning': '#D55E00',
+  'Tornado Watch': '#D55E00',
+  'Severe Thunderstorm Warning': '#E69F00',
+  'Severe Thunderstorm Watch': '#E69F00',
+  'Flash Flood Warning': '#0072B2',
+  'Flash Flood Watch': '#0072B2',
+  'Flood Warning': '#56B4E9',
+  'Flood Watch': '#56B4E9',
+  'Flood Advisory': '#56B4E9',
+  'Flood Statement': '#56B4E9',
+  'Special Weather Statement': '#009E73',
+  'Freeze Warning': '#CC79A7',
+  'Freeze Watch': '#CC79A7',
+};
+
+export const FALLBACK_COLOR_CB = '#BBBBBB';
+
+export function warningColorsFor(mode: ColorVisionMode): Record<string, string> {
+  return mode === 'cbFriendly' ? WARNING_COLORS_CB : WARNING_COLORS;
+}
+
+export function fallbackColorFor(mode: ColorVisionMode): string {
+  return mode === 'cbFriendly' ? FALLBACK_COLOR_CB : FALLBACK_COLOR;
+}
+
 export const WARNING_PRIORITY: Record<string, number> = {
   'Tornado Warning': 0,
   'Severe Thunderstorm Warning': 1,
@@ -80,8 +112,8 @@ export const WARNING_PRIORITY: Record<string, number> = {
   'Freeze Watch': 8,
 };
 
-export function colorForEvent(event: string): string {
-  return WARNING_COLORS[event] ?? FALLBACK_COLOR;
+export function colorForEvent(event: string, mode: ColorVisionMode = 'default'): string {
+  return warningColorsFor(mode)[event] ?? fallbackColorFor(mode);
 }
 
 export function priorityForEvent(event: string): number {

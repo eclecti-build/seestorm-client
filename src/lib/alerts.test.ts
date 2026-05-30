@@ -15,6 +15,9 @@ import {
   priorityForEvent,
   resolveAlertUrl,
   tierForEvent,
+  WARNING_COLORS,
+  warningColorsFor,
+  fallbackColorFor,
   type IngestAlert,
   type IngestSnapshot,
   type WeatherAlert,
@@ -858,5 +861,36 @@ describe('groupByFamily', () => {
 
   it('returns empty array for zero alerts', () => {
     expect(groupByFamily([])).toEqual([]);
+  });
+});
+
+describe("colorForEvent — default mode (regression: must not change today's look)", () => {
+  it('returns the exact current hexes for default mode', () => {
+    expect(colorForEvent('Tornado Warning')).toBe('#FF0000');
+    expect(colorForEvent('Tornado Warning', 'default')).toBe('#FF0000');
+    expect(colorForEvent('Severe Thunderstorm Warning', 'default')).toBe('#FFA500');
+    expect(colorForEvent('Freeze Warning', 'default')).toBe('#483D8B');
+  });
+  it('falls back to the existing gray for unknown events in default mode', () => {
+    expect(colorForEvent('Dust Storm Warning', 'default')).toBe(FALLBACK_COLOR);
+  });
+  it('warningColorsFor("default") is the canonical palette', () => {
+    expect(warningColorsFor('default')).toBe(WARNING_COLORS);
+  });
+});
+
+describe('colorForEvent — colorblind mode', () => {
+  it('maps each family to its Okabe–Ito hue', () => {
+    expect(colorForEvent('Tornado Warning', 'cbFriendly')).toBe('#D55E00');
+    expect(colorForEvent('Tornado Watch', 'cbFriendly')).toBe('#D55E00');
+    expect(colorForEvent('Severe Thunderstorm Warning', 'cbFriendly')).toBe('#E69F00');
+    expect(colorForEvent('Flash Flood Warning', 'cbFriendly')).toBe('#0072B2');
+    expect(colorForEvent('Flood Advisory', 'cbFriendly')).toBe('#56B4E9');
+    expect(colorForEvent('Freeze Watch', 'cbFriendly')).toBe('#CC79A7');
+    expect(colorForEvent('Special Weather Statement', 'cbFriendly')).toBe('#009E73');
+  });
+  it('uses the CB fallback for unknown events', () => {
+    expect(colorForEvent('Dust Storm Warning', 'cbFriendly')).toBe(fallbackColorFor('cbFriendly'));
+    expect(fallbackColorFor('cbFriendly')).toBe('#BBBBBB');
   });
 });

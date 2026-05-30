@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import ChromeOverlay from '@/components/ChromeOverlay';
+import SettingsButton from '@/components/SettingsButton';
 
 const WeatherMap = dynamic(() => import('@/components/WeatherMap'), {
   ssr: false,
@@ -17,6 +18,7 @@ export default function Home() {
     <main className="relative w-full ss-viewport-fill">
       <WeatherMap />
       <ChromeOverlay />
+      <SettingsButton />
     </main>
   );
 }

@@ -9,6 +9,8 @@ import {
   type AlertFamily,
   type WeatherAlert,
 } from '@/lib/alerts';
+import { tornadoColor } from '@/lib/tornado';
+import { useColorVisionMode } from '@/lib/preferences';
 import { AlertIcon } from '@/lib/alertIcons';
 
 // Family headers summarize a whole bucket of related events — we pick a
@@ -62,8 +64,13 @@ function AlertCard({
   userState?: string;
 }) {
   // Tornado alerts use the normalized category color (magenta ramp); all
-  // other events fall back to the standard per-event palette.
-  const color = alert.properties.tornadoColor ?? colorForEvent(alert.properties.event);
+  // other events fall back to the standard per-event palette. Resolved from
+  // the live color-vision mode (not the baked `tornadoColor` property, which
+  // is always the default-palette hex) so colorblind mode recolors the panel.
+  const mode = useColorVisionMode();
+  const color = alert.properties.tornado
+    ? tornadoColor(alert.properties.tornado, mode)
+    : colorForEvent(alert.properties.event, mode);
   const tier = tierForEvent(alert.properties.event);
   const url = alert.properties.url;
 
@@ -145,7 +152,8 @@ function FamilySection({
   now: number;
   userState?: string;
 }) {
-  const color = colorForEvent(alerts[0]?.properties.event ?? '');
+  const mode = useColorVisionMode();
+  const color = colorForEvent(alerts[0]?.properties.event ?? '', mode);
   // The family header icon represents the whole bucket; we key off an
   // exemplar event rather than `alerts[0]` so an empty-family render (shouldn't
   // happen in practice, but defensive) still lands on the right glyph.

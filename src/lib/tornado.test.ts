@@ -6,6 +6,8 @@ import {
   tornadoLabel,
   tornadoLabelTitle,
   tornadoMapAnnotation,
+  TORNADO_CATEGORY_COLOR,
+  tornadoCategoryColorsFor,
   type TornadoDetection,
 } from './tornado';
 
@@ -115,5 +117,34 @@ describe('tornadoMapAnnotation — consistent CTA verb', () => {
     expect(tornadoMapAnnotation(confirmed)).toBe('CONFIRMED TORNADO — TAKE COVER');
     expect(tornadoMapAnnotation(pds)).toBe('PARTICULARLY DANGEROUS — TAKE COVER NOW');
     expect(tornadoMapAnnotation(emergency)).toBe('TORNADO EMERGENCY — TAKE COVER NOW');
+  });
+});
+
+const emergencyCB: TornadoDetection = {
+  detection: 'OBSERVED',
+  confirmed: true,
+  damage_threat: 'CATASTROPHIC',
+};
+const radarIndicated: TornadoDetection = {
+  detection: 'RADAR_INDICATED',
+  confirmed: false,
+  damage_threat: 'BASE',
+};
+
+describe('tornadoColor — default mode (regression)', () => {
+  it('returns the current ramp hexes', () => {
+    expect(tornadoColor(radarIndicated)).toBe('#FF8C42');
+    expect(tornadoColor(emergencyCB)).toBe('#C026D3');
+    expect(tornadoColor(emergencyCB, 'default')).toBe('#C026D3');
+  });
+  it('tornadoCategoryColorsFor("default") is the canonical ramp', () => {
+    expect(tornadoCategoryColorsFor('default')).toBe(TORNADO_CATEGORY_COLOR);
+  });
+});
+
+describe('tornadoColor — colorblind mode', () => {
+  it('returns the CB magenta brightness ramp', () => {
+    expect(tornadoColor(radarIndicated, 'cbFriendly')).toBe('#B05CA8');
+    expect(tornadoColor(emergencyCB, 'cbFriendly')).toBe('#FF9EC4');
   });
 });
