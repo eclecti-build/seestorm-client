@@ -64,6 +64,8 @@ export function tornadoCategory(d: TornadoDetection): TornadoCategory {
   return 'CONFIRMED';
 }
 
+import type { ColorVisionMode } from './colorVisionMode';
+
 // Hue-shift-to-magenta ramp (locked). Differentiation ascends the ladder;
 // Tornado Emergency = magenta, matching the RadarScope/NWS convention.
 export const TORNADO_CATEGORY_COLOR: Record<TornadoCategory, string> = {
@@ -73,8 +75,23 @@ export const TORNADO_CATEGORY_COLOR: Record<TornadoCategory, string> = {
   EMERGENCY: '#C026D3', // magenta — catastrophic, rarest
 };
 
-export function tornadoColor(d: TornadoDetection): string {
-  return TORNADO_CATEGORY_COLOR[tornadoCategory(d)];
+// Colorblind-safe tornado ladder (opt-in). A single magenta family that
+// climbs in brightness — on the dark basemap brighter reads as more severe,
+// and the magenta region stays distinguishable across CVD types. The existing
+// category-scaled halo width + confirmed pulse reinforce the escalation.
+export const TORNADO_CATEGORY_COLOR_CB: Record<TornadoCategory, string> = {
+  RADAR_INDICATED: '#B05CA8',
+  CONFIRMED: '#D44FA0',
+  PDS: '#F06595',
+  EMERGENCY: '#FF9EC4',
+};
+
+export function tornadoCategoryColorsFor(mode: ColorVisionMode): Record<TornadoCategory, string> {
+  return mode === 'cbFriendly' ? TORNADO_CATEGORY_COLOR_CB : TORNADO_CATEGORY_COLOR;
+}
+
+export function tornadoColor(d: TornadoDetection, mode: ColorVisionMode = 'default'): string {
+  return tornadoCategoryColorsFor(mode)[tornadoCategory(d)];
 }
 
 /**
