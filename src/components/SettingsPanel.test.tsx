@@ -31,8 +31,9 @@ describe('SettingsPanel — colorblind toggle', () => {
     window.localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ colorVisionMode: 'cbFriendly' }));
     __resetPreferencesForTests();
     render(<SettingsPanel />);
-    expect(
-      screen.getByRole('switch', { name: /colorblind-friendly colors/i }),
-    ).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('switch', { name: /colorblind-friendly colors/i })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   });
 });

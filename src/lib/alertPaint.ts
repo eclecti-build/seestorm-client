@@ -47,10 +47,14 @@ export function buildTornadoColorExpression(mode: ColorVisionMode): unknown[] {
   return [
     'match',
     ['get', 'tornadoCategory'],
-    'RADAR_INDICATED', c.RADAR_INDICATED,
-    'CONFIRMED', c.CONFIRMED,
-    'PDS', c.PDS,
-    'EMERGENCY', c.EMERGENCY,
+    'RADAR_INDICATED',
+    c.RADAR_INDICATED,
+    'CONFIRMED',
+    c.CONFIRMED,
+    'PDS',
+    c.PDS,
+    'EMERGENCY',
+    c.EMERGENCY,
     c.RADAR_INDICATED,
   ];
 }

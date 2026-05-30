@@ -120,7 +120,6 @@ function CtaTextGlyph() {
   );
 }
 
-
 const TORNADO_STATUS_DESCRIPTIONS: ReadonlyArray<{
   category: TornadoCategory;
   label: string;

@@ -864,7 +864,7 @@ describe('groupByFamily', () => {
   });
 });
 
-describe('colorForEvent — default mode (regression: must not change today\'s look)', () => {
+describe("colorForEvent — default mode (regression: must not change today's look)", () => {
   it('returns the exact current hexes for default mode', () => {
     expect(colorForEvent('Tornado Warning')).toBe('#FF0000');
     expect(colorForEvent('Tornado Warning', 'default')).toBe('#FF0000');
