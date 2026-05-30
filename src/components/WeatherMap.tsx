@@ -11,13 +11,15 @@ import {
   buildAlertViews,
   deriveMultiStateDisplay,
   parseIngestSnapshot,
-  WARNING_COLORS,
   colorForEvent,
   type AlertsResponse,
   type AlertTier,
   type IngestAlert,
   type WeatherAlert,
 } from '@/lib/alerts';
+import { tornadoColor } from '@/lib/tornado';
+import { buildEventColorExpression, buildTornadoColorExpression } from '@/lib/alertPaint';
+import { useColorVisionMode } from '@/lib/preferences';
 import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import { boostBasemapContrast } from '@/lib/mapContrast';
 import { alertLayerFilter } from '@/lib/alertFilter';
@@ -66,6 +68,15 @@ const RADAR_OPACITY_EXPR: ExpressionSpecification = [
 ] as unknown as ExpressionSpecification;
 const CROSSFADE_MS = 300; // A↔B layer opacity crossfade
 const TILE_FADE_MS = 400; // MapLibre built-in in-tile fade
+
+// Colorblind radar recolor, applied to both raster radar layers via native
+// paint properties. Rotating green→blue and red→magenta + a small saturation/
+// contrast bump opens a brightness gap between light rain and heavy cores for
+// red-green vision. Default mode uses MapLibre's neutral defaults (no-op), so
+// the radar is untouched unless the user opts in. Angle is a verify-time tunable.
+const RADAR_CB_HUE_ROTATE = 100;
+const RADAR_CB_SATURATION = 0.25;
+const RADAR_CB_CONTRAST = 0.1;
 
 // ---------------------------------------------------------------------------
 // Types matching the Worker + ingest contract
@@ -200,6 +211,12 @@ export default function WeatherMap() {
   // 0..history.length-1 means "historical" — show snapshot at that index.
   const [sliderValue, setSliderValue] = useState<number>(0);
   const [mapReady, setMapReady] = useState<boolean>(false);
+  const colorVisionMode = useColorVisionMode();
+  // Init runs once; it reads the mode through a ref so a later mode change does
+  // NOT re-run init (which would rebuild the whole map). Live updates are
+  // handled by the dedicated effect below.
+  const colorVisionModeRef = useRef(colorVisionMode);
+  colorVisionModeRef.current = colorVisionMode;
   // Playback state for the time-lapse loop. Pressing play from live rewinds to
   // the oldest frame; reaching the end wraps to 0 (radar-loop convention).
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -920,6 +937,53 @@ export default function WeatherMap() {
     setMotionVisibility(m, !isForecast);
   }, [mapReady, isForecast, hiddenTiers, alertLayerFilters, showTornadoCta]);
 
+  // Recolor every palette-driven surface when the color-vision mode changes.
+  // Separate from init so toggling never rebuilds the map. Guarded on layer
+  // existence so it is safe before/after style reloads.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !mapReady) return;
+
+    const eventColor = buildEventColorExpression(
+      colorVisionMode,
+    ) as maplibregl.ExpressionSpecification;
+    for (const id of ['alert-fills-warning', 'alert-fills-watch', 'alert-fills-advisory']) {
+      if (m.getLayer(id)) m.setPaintProperty(id, 'fill-color', eventColor);
+    }
+    for (const id of [
+      'alert-outlines-warning',
+      'alert-outlines-watch',
+      'alert-outlines-advisory',
+    ]) {
+      if (m.getLayer(id)) m.setPaintProperty(id, 'line-color', eventColor);
+    }
+
+    // Storm-motion overlays are tinted by the SAME eventColor expression at
+    // init (motion-line / -origin / -ticks / -head), so they must be recolored
+    // here too or they'd strand the old palette after a toggle. Each uses a
+    // different paint key for the color.
+    if (m.getLayer('motion-line')) m.setPaintProperty('motion-line', 'line-color', eventColor);
+    for (const id of ['motion-origin', 'motion-ticks']) {
+      if (m.getLayer(id)) m.setPaintProperty(id, 'circle-color', eventColor);
+    }
+    if (m.getLayer('motion-head')) m.setPaintProperty('motion-head', 'icon-color', eventColor);
+
+    const tornadoColorExpr = buildTornadoColorExpression(
+      colorVisionMode,
+    ) as maplibregl.ExpressionSpecification;
+    for (const id of ['tornado-cat-outline', 'tornado-confirmed-halo', 'tornado-confirmed-pulse']) {
+      if (m.getLayer(id)) m.setPaintProperty(id, 'line-color', tornadoColorExpr);
+    }
+
+    const cb = colorVisionMode === 'cbFriendly';
+    for (const id of ['radar-a', 'radar-b']) {
+      if (!m.getLayer(id)) continue;
+      m.setPaintProperty(id, 'raster-hue-rotate', cb ? RADAR_CB_HUE_ROTATE : 0);
+      m.setPaintProperty(id, 'raster-saturation', cb ? RADAR_CB_SATURATION : 0);
+      m.setPaintProperty(id, 'raster-contrast', cb ? RADAR_CB_CONTRAST : 0);
+    }
+  }, [mapReady, colorVisionMode]);
+
   // Map init.
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -1055,37 +1119,13 @@ export default function WeatherMap() {
       });
 
       // Per-event color expression — reused across all six tier layers below.
-      // Unknown event strings fall back to gray, matching the Advisory tone.
-      const eventColor: maplibregl.ExpressionSpecification = [
-        'match',
-        ['get', 'event'],
-        'Tornado Warning',
-        WARNING_COLORS['Tornado Warning'],
-        'Tornado Watch',
-        WARNING_COLORS['Tornado Watch'],
-        'Severe Thunderstorm Warning',
-        WARNING_COLORS['Severe Thunderstorm Warning'],
-        'Severe Thunderstorm Watch',
-        WARNING_COLORS['Severe Thunderstorm Watch'],
-        'Flash Flood Warning',
-        WARNING_COLORS['Flash Flood Warning'],
-        'Flash Flood Watch',
-        WARNING_COLORS['Flash Flood Watch'],
-        // Plain hydrologic Flood products. Distinct from Flash Flood — these
-        // are the slower-onset river / areal Warnings the NWS issues as
-        // "FLW" / "FLS". Without these cases the polygon fell back to the
-        // gray default and visually read as low-urgency despite being a
-        // life-safety Warning.
-        'Flood Warning',
-        WARNING_COLORS['Flood Warning'],
-        'Flood Watch',
-        WARNING_COLORS['Flood Watch'],
-        'Flood Advisory',
-        WARNING_COLORS['Flood Advisory'],
-        'Flood Statement',
-        WARNING_COLORS['Flood Statement'],
-        '#888888',
-      ];
+      // Built from the active color-vision palette via the tested pure builder
+      // (alertPaint.ts). Default mode reproduces the previous hardcoded
+      // expression byte-for-byte. The mode-change effect below rebuilds this
+      // when the user toggles colorblind mode.
+      const eventColor = buildEventColorExpression(
+        colorVisionModeRef.current,
+      ) as maplibregl.ExpressionSpecification;
 
       // Tier classification happens entirely inside MapLibre filters —
       // suffix-match the `event` string so new NWS event types are placed
@@ -1330,10 +1370,15 @@ export default function WeatherMap() {
         ['get', 'tornadoConfirmed'],
         true,
       ] as unknown as maplibregl.FilterSpecification;
-      const tornadoColorExpr = [
-        'get',
-        'tornadoColor',
-      ] as unknown as maplibregl.ExpressionSpecification;
+      // Drive tornado color from the category (a stable feature field) through
+      // the active palette, NOT the baked `tornadoColor` property — so a mode
+      // flip recolors the ramp without re-deriving features. In default mode
+      // each category resolves to the same hex the baked property carried, so
+      // the look is unchanged. The `['has','tornadoColor']` filters elsewhere
+      // still rely on the baked property's presence and are untouched.
+      const tornadoColorExpr = buildTornadoColorExpression(
+        colorVisionModeRef.current,
+      ) as maplibregl.ExpressionSpecification;
 
       // Every tornado polygon — including radar-indicated — gets a
       // category-COLORED border on this parallel layer. The shared
@@ -1835,9 +1880,9 @@ export default function WeatherMap() {
               <div
                 className="text-xs font-bold uppercase tracking-wide mb-1"
                 style={{
-                  color:
-                    selectedAlert.properties.tornadoColor ??
-                    colorForEvent(selectedAlert.properties.event),
+                  color: selectedAlert.properties.tornado
+                    ? tornadoColor(selectedAlert.properties.tornado, colorVisionMode)
+                    : colorForEvent(selectedAlert.properties.event, colorVisionMode),
                 }}
                 title={selectedAlert.properties.tornadoLabelTitle}
               >
