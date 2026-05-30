@@ -210,6 +210,8 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
                 codes={drilled.members}
                 selectedState={selectedState}
                 onPick={handlePick}
+                pulse
+                accent={REGION_THEME[drilled.id]}
               />
             </div>
           ) : (
@@ -305,10 +307,14 @@ interface StateListProps {
   selectedState: string | null;
   onPick: (code: string) => void;
   emptyLabel?: string;
+  /** Pulse the rows to nudge a selection (drill-down leaf only, not search). */
+  pulse?: boolean;
+  /** Region accent colour the pulse glows in. */
+  accent?: string;
 }
 
 /** Vertical list of large code + full-name buttons — the drill-down leaf. */
-function StateList({ codes, selectedState, onPick, emptyLabel }: StateListProps) {
+function StateList({ codes, selectedState, onPick, emptyLabel, pulse, accent }: StateListProps) {
   if (codes.length === 0) {
     return (
       <div className="text-[11px] text-gray-500 text-center py-2">{emptyLabel ?? 'No matches'}</div>
@@ -316,8 +322,11 @@ function StateList({ codes, selectedState, onPick, emptyLabel }: StateListProps)
   }
   return (
     <div className="flex flex-col gap-1">
-      {codes.map((code) => {
+      {codes.map((code, i) => {
         const active = selectedState === code;
+        // Already-chosen rows don't nag; everything else in a drilled region
+        // pulses, staggered top-to-bottom so it ripples.
+        const pulsing = pulse && !active;
         return (
           <button
             key={code}
@@ -325,9 +334,14 @@ function StateList({ codes, selectedState, onPick, emptyLabel }: StateListProps)
             onClick={() => onPick(code)}
             aria-pressed={active}
             aria-label={STATE_NAMES[code] ?? code}
+            style={
+              pulsing && accent
+                ? ({ '--ss-pulse': accent, animationDelay: `${i * 110}ms` } as React.CSSProperties)
+                : undefined
+            }
             className={`flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors ${
-              active ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-800 hover:bg-gray-700'
-            }`}
+              pulsing ? 'ss-pulse ' : ''
+            }${active ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-800 hover:bg-gray-700'}`}
           >
             <span
               className={`font-mono text-xs font-bold w-7 shrink-0 ${

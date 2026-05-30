@@ -81,4 +81,19 @@ describe('<LocationChip /> — region drill-down', () => {
     expect(screen.getByRole('button', { name: /hawaii/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /puerto rico/i })).toBeInTheDocument();
   });
+
+  it('pulses the drilled region’s states to prompt a selection, but not search results', async () => {
+    expand();
+    fireEvent.click(await screen.findByRole('button', { name: /great lakes/i }));
+    const wisconsin = await screen.findByRole('button', { name: /wisconsin/i });
+    // Drill-down leaf nudges the user to keep going (tap a state to see alerts).
+    expect(wisconsin).toHaveClass('ss-pulse');
+    // It carries the region accent so the pulse colour ties back to the map.
+    expect(wisconsin.style.getPropertyValue('--ss-pulse')).not.toBe('');
+
+    // Searching is a deliberate jump, not a half-finished drill-down — no nag.
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: 'florida' } });
+    const florida = await screen.findByRole('button', { name: /florida/i });
+    expect(florida).not.toHaveClass('ss-pulse');
+  });
 });

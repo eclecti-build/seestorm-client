@@ -70,6 +70,35 @@ body.ss-scroll {
   max-height: 60dvh;
 }
 
+/* Drill-down "keep going" cue. After tapping a region, its states pulse a
+ * soft glow in the region's own accent colour (passed as --ss-pulse) so the
+ * user reads it as "tap one of these to see its alerts," not a dead end. The
+ * stagger (animation-delay set per row in JS) makes it ripple down the list.
+ *
+ * color-mix degrades to no shadow on browsers that lack it — an acceptable
+ * "no pulse" fallback rather than a broken rule. */
+@keyframes ss-state-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ss-pulse, transparent) 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 8px 1px color-mix(in srgb, var(--ss-pulse, transparent) 45%, transparent);
+  }
+}
+.ss-pulse {
+  animation: ss-state-pulse 1.8s ease-in-out infinite;
+}
+
+/* Respect reduced-motion: drop the animation but keep a static accent ring so
+ * the "make a selection" affordance still reads for motion-sensitive users. */
+@media (prefers-reduced-motion: reduce) {
+  .ss-pulse {
+    animation: none;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ss-pulse, transparent) 38%, transparent);
+  }
+}
+
 /* Keep MapLibre's default top-anchored controls (zoom/compass) out from
  * under the iOS status bar / Android camera cutout when viewportFit=cover. */
 .maplibregl-ctrl-top-left,
