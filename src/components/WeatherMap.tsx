@@ -5,7 +5,8 @@ import maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import * as turf from '@turf/turf';
-import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES, HRRR_FRAME_COUNT } from '@/lib/radar';
+import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES } from '@/lib/radar';
+import { scrubberMax, clampToScrubberRange } from '@/lib/scrubber';
 import { buildMotionFeatures, setMotionVisibility } from '@/lib/stormMotion';
 import {
   buildAlertViews,
@@ -210,6 +211,9 @@ export default function WeatherMap() {
   // history.length (rightmost) means "live" — poll the current snapshot every 30s.
   // 0..history.length-1 means "historical" — show snapshot at that index.
   const [sliderValue, setSliderValue] = useState<number>(0);
+  // The bar ends at the live edge by default; the HRRR forecast frames are
+  // opt-in (the "+1h forecast" toggle below) so "live" reads as the leading edge.
+  const [showForecast, setShowForecast] = useState<boolean>(false);
   const [mapReady, setMapReady] = useState<boolean>(false);
   const colorVisionMode = useColorVisionMode();
   // Init runs once; it reads the mode through a ref so a later mode change does
@@ -273,9 +277,9 @@ export default function WeatherMap() {
   const { serverNow, recordServerTime } = useClockOffset();
 
   // Slider range is: 0 .. history.length-1 (historical)
-  //                  history.length (live)
-  //                  history.length+1 .. history.length+HRRR_FRAME_COUNT (forecast)
-  const sliderMax = history.length + HRRR_FRAME_COUNT;
+  //                  history.length (live, rightmost when forecast is hidden)
+  //                  history.length+1 .. +HRRR_FRAME_COUNT (forecast, opt-in)
+  const sliderMax = scrubberMax(history.length, showForecast);
   const isForecast = sliderValue > history.length;
   const isLive = !isForecast && (history.length === 0 || sliderValue === history.length);
   // Minutes ahead of now for the current forecast frame (0 when not forecasting).
@@ -738,15 +742,15 @@ export default function WeatherMap() {
     const frameMs = 500 / playSpeed;
     const id = setInterval(() => {
       setSliderValue((v) => {
-        // Full loop: historical → live → forecast → wrap to oldest historical.
-        // This gives a continuous "past into future" animation the user can
-        // watch without touching anything.
-        if (v >= history.length + HRRR_FRAME_COUNT) return 0;
+        // Loop historical → live → (forecast, if revealed) → wrap to oldest.
+        // This gives a continuous animation the user can watch without
+        // touching anything; the wrap point follows the visible range.
+        if (v >= sliderMax) return 0;
         return v + 1;
       });
     }, frameMs);
     return () => clearInterval(id);
-  }, [isPlaying, playSpeed, history.length]);
+  }, [isPlaying, playSpeed, history.length, sliderMax]);
 
   const togglePlay = useCallback(() => {
     setIsPlaying((p) => {
@@ -764,7 +768,17 @@ export default function WeatherMap() {
 
   const stepForward = useCallback(() => {
     setIsPlaying(false);
-    setSliderValue((v) => Math.min(history.length + HRRR_FRAME_COUNT, v + 1));
+    setSliderValue((v) => Math.min(sliderMax, v + 1));
+  }, [sliderMax]);
+
+  // Reveal/hide the opt-in HRRR forecast frames. Hiding snaps any forecast
+  // position back to the live edge so the thumb never sits past the bar.
+  const toggleForecast = useCallback(() => {
+    setShowForecast((prev) => {
+      const next = !prev;
+      if (!next) setSliderValue((v) => clampToScrubberRange(v, history.length, false));
+      return next;
+    });
   }, [history.length]);
 
   // Crossfade the radar between frames.
@@ -1934,8 +1948,12 @@ export default function WeatherMap() {
                     setIsPlaying(false);
                     setSliderValue(Number(e.target.value));
                   }}
-                  className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700 accent-red-500"
-                  aria-label="Scrub through history, live, and forecast"
+                  className={`flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700 ss-scrubber${
+                    isLive ? ' ss-scrubber-live' : ''
+                  }`}
+                  aria-label={`Scrub through radar history, live${
+                    showForecast ? ', and forecast' : ''
+                  }`}
                 />
 
                 <div className="text-xs text-gray-300 font-mono shrink-0 w-44 text-right">
@@ -1996,7 +2014,24 @@ export default function WeatherMap() {
                   ))}
                 </div>
 
-                <div className="ml-auto font-mono text-gray-400">
+                <button
+                  onClick={toggleForecast}
+                  aria-pressed={showForecast}
+                  className={`ml-auto px-2 py-1 rounded font-mono transition-colors ${
+                    showForecast
+                      ? 'bg-amber-500 text-black'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                  title={
+                    showForecast
+                      ? 'Hide the 1-hour HRRR forecast'
+                      : 'Show the 1-hour HRRR radar forecast'
+                  }
+                >
+                  {showForecast ? 'Hide forecast' : '+1h forecast'}
+                </button>
+
+                <div className="font-mono text-gray-400">
                   Frame {sliderValue + 1}/{sliderMax + 1}
                 </div>
               </div>
