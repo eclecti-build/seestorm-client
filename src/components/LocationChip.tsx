@@ -8,7 +8,9 @@ import {
   type UserLocation,
 } from '@/lib/userLocation';
 import { COVERAGE, STATE_CENTERS, STATE_NAMES, STATE_VIEW_ZOOM } from '@/lib/coverage';
+import { OFFSHORE, REGIONS, regionForCode, type RegionId } from '@/lib/regions';
 import { lookupZip, normalizeZip } from '@/lib/zipLookup';
+import UsRegionMap, { REGION_THEME } from './UsRegionMap';
 
 const ZIP_VIEW_ZOOM = 8;
 
@@ -23,6 +25,7 @@ interface LocationChipProps {
 export default function LocationChip({ onLocationChange }: LocationChipProps) {
   const { location, hydrated } = useUserLocation();
   const [mode, setMode] = useState<Mode>('collapsed');
+  const [drillRegion, setDrillRegion] = useState<RegionId | null>(null);
   const [zipInput, setZipInput] = useState('');
   const [zipError, setZipError] = useState<string | null>(null);
   const [zipBusy, setZipBusy] = useState(false);
@@ -33,21 +36,31 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
   const errorId = `${reactId}-zip-error`;
 
   const selectedState = location?.state?.toUpperCase() ?? null;
+  const activeRegion = selectedState ? (regionForCode(selectedState)?.id ?? null) : null;
 
-  const filteredStates = useMemo(() => {
-    if (!search.trim()) return COVERAGE;
+  const searching = search.trim().length > 0;
+  const searchResults = useMemo(() => {
+    if (!searching) return [];
     const q = search.trim().toLowerCase();
     return COVERAGE.filter((code) => {
       if (code.toLowerCase().includes(q)) return true;
       const name = STATE_NAMES[code];
       return name ? name.toLowerCase().includes(q) : false;
     });
-  }, [search]);
+  }, [search, searching]);
+
+  const resetTransient = useCallback(() => {
+    setDrillRegion(null);
+    setZipInput('');
+    setZipError(null);
+    setSearch('');
+  }, []);
 
   const handlePick = useCallback(
-    (state: keyof typeof STATE_CENTERS) => {
+    (state: string) => {
       zipRequestRef.current++;
       const center = STATE_CENTERS[state];
+      if (!center) return;
       const next: UserLocation = {
         state,
         lat: center.lat,
@@ -57,22 +70,18 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
       };
       setUserLocation(next);
       setMode('collapsed');
-      setZipInput('');
-      setZipError(null);
-      setSearch('');
+      resetTransient();
       onLocationChange?.({ state, lat: center.lat, lon: center.lon, zoom: STATE_VIEW_ZOOM });
     },
-    [onLocationChange],
+    [onLocationChange, resetTransient],
   );
 
   const handleClear = useCallback(() => {
     zipRequestRef.current++;
     clearUserLocation();
-    setZipInput('');
-    setZipError(null);
-    setSearch('');
+    resetTransient();
     onLocationChange?.(null);
-  }, [onLocationChange]);
+  }, [onLocationChange, resetTransient]);
 
   const handleZipSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -102,8 +111,7 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
         };
         setUserLocation(next);
         setMode('collapsed');
-        setZipInput('');
-        setSearch('');
+        resetTransient();
         onLocationChange?.({
           state: record.state,
           lat: record.lat,
@@ -117,7 +125,7 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
         if (requestId === zipRequestRef.current) setZipBusy(false);
       }
     },
-    [zipInput, onLocationChange],
+    [zipInput, onLocationChange, resetTransient],
   );
 
   if (!hydrated) return null;
@@ -127,6 +135,8 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
   const summary = selectedZip
     ? `${selectedZip} · ${selectedState ?? ''}`
     : (selectedState ?? 'All states');
+
+  const drilled = drillRegion ? REGIONS.find((r) => r.id === drillRegion) : null;
 
   return (
     <div
@@ -138,7 +148,10 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
     >
       <button
         type="button"
-        onClick={() => setMode(open ? 'collapsed' : 'expanded')}
+        onClick={() => {
+          if (open) resetTransient();
+          setMode(open ? 'collapsed' : 'expanded');
+        }}
         aria-expanded={open}
         aria-controls="location-chip-body"
         className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-800 transition-colors"
@@ -165,30 +178,74 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
             className="w-full bg-gray-800 text-white px-2 py-1 rounded text-xs placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
 
-          <div className="grid grid-cols-7 gap-1">
-            {filteredStates.map((state) => {
-              const active = selectedState === state;
-              return (
-                <button
-                  key={state}
-                  type="button"
-                  onClick={() => handlePick(state)}
-                  aria-pressed={active}
-                  title={STATE_NAMES[state]}
-                  className={`px-1 py-1 rounded font-mono text-xs font-semibold transition-colors ${
-                    active
-                      ? 'bg-blue-600 text-white hover:bg-blue-500'
-                      : 'bg-gray-800 text-gray-200 hover:bg-gray-700'
-                  }`}
-                >
-                  {state}
-                </button>
-              );
-            })}
-          </div>
-
-          {filteredStates.length === 0 && (
-            <div className="text-[11px] text-gray-500 text-center py-1">No matches</div>
+          {searching ? (
+            <StateList
+              codes={searchResults}
+              selectedState={selectedState}
+              onPick={handlePick}
+              emptyLabel="No matches"
+            />
+          ) : drilled ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setDrillRegion(null)}
+                className="flex items-center gap-2 w-full text-left group"
+              >
+                <span aria-hidden="true" className="text-gray-400 group-hover:text-white">
+                  ‹
+                </span>
+                <span
+                  aria-hidden="true"
+                  className="h-2.5 w-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: REGION_THEME[drilled.id] }}
+                />
+                <span className="font-semibold text-white shrink-0 whitespace-nowrap">
+                  {drilled.label}
+                </span>
+                <span className="text-gray-500 truncate min-w-0">· {drilled.blurb}</span>
+                <span className="sr-only">Back to regions</span>
+              </button>
+              <StateList
+                codes={drilled.members}
+                selectedState={selectedState}
+                onPick={handlePick}
+              />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <UsRegionMap
+                active={open}
+                activeRegion={activeRegion}
+                onPickRegion={(id) => setDrillRegion(id)}
+              />
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-gray-500">
+                  Islands &amp; territories
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {OFFSHORE.map((code) => {
+                    const active = selectedState === code;
+                    return (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => handlePick(code)}
+                        aria-pressed={active}
+                        aria-label={STATE_NAMES[code]}
+                        className={`px-1.5 py-1 rounded font-mono text-[11px] font-semibold transition-colors ${
+                          active
+                            ? 'bg-blue-600 text-white hover:bg-blue-500'
+                            : 'bg-gray-800 text-gray-200 hover:bg-gray-700'
+                        }`}
+                      >
+                        {code}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           )}
 
           <form onSubmit={handleZipSubmit} className="space-y-1 pt-1 border-t border-gray-800">
@@ -239,6 +296,52 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+interface StateListProps {
+  codes: ReadonlyArray<string>;
+  selectedState: string | null;
+  onPick: (code: string) => void;
+  emptyLabel?: string;
+}
+
+/** Vertical list of large code + full-name buttons — the drill-down leaf. */
+function StateList({ codes, selectedState, onPick, emptyLabel }: StateListProps) {
+  if (codes.length === 0) {
+    return (
+      <div className="text-[11px] text-gray-500 text-center py-2">{emptyLabel ?? 'No matches'}</div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      {codes.map((code) => {
+        const active = selectedState === code;
+        return (
+          <button
+            key={code}
+            type="button"
+            onClick={() => onPick(code)}
+            aria-pressed={active}
+            aria-label={STATE_NAMES[code] ?? code}
+            className={`flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors ${
+              active ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-800 hover:bg-gray-700'
+            }`}
+          >
+            <span
+              className={`font-mono text-xs font-bold w-7 shrink-0 ${
+                active ? 'text-white' : 'text-gray-100'
+              }`}
+            >
+              {code}
+            </span>
+            <span className={`text-xs truncate ${active ? 'text-blue-50' : 'text-gray-300'}`}>
+              {STATE_NAMES[code] ?? code}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
