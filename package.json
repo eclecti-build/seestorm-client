@@ -59,7 +59,7 @@
     "prettier": "^3.8.3",
     "shapefile": "^0.6.6",
     "tailwindcss": "^4",
-    "typescript": "^5",
+    "typescript": "^6",
     "vitest": "^3.2.4",
     "wrangler": "^4.83.0"
   }
