@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { WARNING_COLORS, tierForEvent, type AlertTier } from '@/lib/alerts';
+import { warningColorsFor, tierForEvent, type AlertTier } from '@/lib/alerts';
 import { AlertIcon } from '@/lib/alertIcons';
-import { TORNADO_CATEGORY_COLOR, type TornadoCategory } from '@/lib/tornado';
+import { tornadoCategoryColorsFor, type TornadoCategory } from '@/lib/tornado';
+import { useColorVisionMode } from '@/lib/preferences';
 
 // Tier glyphs communicate the polygon treatment on the map at a glance.
 // Keep them tiny — they sit next to a 14×14 color swatch inside a cramped
@@ -119,33 +120,6 @@ function CtaTextGlyph() {
   );
 }
 
-// Tier rows in the legend double as map-filter toggles. Clicking a tier
-// hides every alert polygon in that tier from the map (the side panel
-// keeps showing them so situational awareness isn't lost). Kept to three
-// tiers — tier-level granularity declutters fast without ballooning the
-// UI into a checkbox soup of individual event types.
-//
-// Tier swatch colors are *derived* from the canonical event in each tier
-// inside `WARNING_COLORS` — this is the single source of truth. Previously
-// the hex literals were duplicated here and drifted independently when the
-// palette moved; now a palette change in one place propagates automatically.
-const TIER_DESCRIPTIONS: ReadonlyArray<{ tier: AlertTier; color: string; label: string }> = [
-  {
-    tier: 'Warning',
-    color: WARNING_COLORS['Tornado Warning'],
-    label: 'Warning — take action',
-  },
-  {
-    tier: 'Watch',
-    color: WARNING_COLORS['Tornado Watch'],
-    label: 'Watch — be aware',
-  },
-  {
-    tier: 'Advisory',
-    color: WARNING_COLORS['Special Weather Statement'],
-    label: 'Advisory — monitor',
-  },
-];
 
 const TORNADO_STATUS_DESCRIPTIONS: ReadonlyArray<{
   category: TornadoCategory;
@@ -205,7 +179,21 @@ export default function MapLegend({
 }: MapLegendProps) {
   const [open, setOpen] = useState<boolean>(false);
 
-  const entries = Object.entries(WARNING_COLORS);
+  const mode = useColorVisionMode();
+  const warningColors = warningColorsFor(mode);
+  const tornadoColors = tornadoCategoryColorsFor(mode);
+
+  const TIER_DESCRIPTIONS: ReadonlyArray<{ tier: AlertTier; color: string; label: string }> = [
+    { tier: 'Warning', color: warningColors['Tornado Warning'], label: 'Warning — take action' },
+    { tier: 'Watch', color: warningColors['Tornado Watch'], label: 'Watch — be aware' },
+    {
+      tier: 'Advisory',
+      color: warningColors['Special Weather Statement'],
+      label: 'Advisory — monitor',
+    },
+  ];
+
+  const entries = Object.entries(warningColors);
 
   return (
     // No self-positioning — this flows inline as the last child of the
@@ -397,7 +385,7 @@ export default function MapLegend({
             <ul className="grid grid-cols-2 gap-x-2 gap-y-1.5">
               {TORNADO_STATUS_DESCRIPTIONS.map(({ category, label, description, pulse }) => (
                 <li key={category} className="flex items-start gap-1.5">
-                  <TornadoStatusGlyph color={TORNADO_CATEGORY_COLOR[category]} pulse={pulse} />
+                  <TornadoStatusGlyph color={tornadoColors[category]} pulse={pulse} />
                   <div className="min-w-0">
                     <div className="text-gray-100 leading-tight">{label}</div>
                     <div className="text-[9px] leading-tight text-gray-400">{description}</div>
