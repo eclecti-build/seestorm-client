@@ -529,6 +529,18 @@ describe('buildEventColorExpression', () => {
     expect(expr[3]).toBe('#D55E00'); // Tornado Warning color (index after 'match', [get], 'Tornado Warning')
     expect(expr[expr.length - 1]).toBe('#BBBBBB'); // CB fallback
   });
+  it('cbFriendly mode also colors Freeze and Special Weather Statement (gray on the map in default mode)', () => {
+    const expr = buildEventColorExpression('cbFriendly');
+    expect(expr).toContain('Freeze Warning');
+    expect(expr).toContain('#CC79A7');
+    expect(expr).toContain('Special Weather Statement');
+    expect(expr).toContain('#009E73');
+  });
+  it('default mode does NOT add the CB-only events (look unchanged)', () => {
+    const expr = buildEventColorExpression('default');
+    expect(expr).not.toContain('Freeze Warning');
+    expect(expr).not.toContain('Special Weather Statement');
+  });
 });
 
 describe('buildTornadoColorExpression', () => {
@@ -571,16 +583,21 @@ Expected: FAIL — `Cannot find module './alertPaint'`.
 // Kept free of any `maplibre-gl` import so they are unit-testable without a DOM
 // or WebGL context. WeatherMap casts the returned arrays to ExpressionSpecification.
 //
-// IMPORTANT: the event ordering below intentionally omits Freeze* and Special
+// IMPORTANT: `DEFAULT_EVENT_ORDER` intentionally omits Freeze* and Special
 // Weather Statement. Those events fall through to the gray fallback on the MAP
 // today (the legend/side-panel still color them via WARNING_COLORS). Preserving
-// that exactly is what keeps default mode visually identical.
+// that exactly is what keeps DEFAULT mode visually identical.
+//
+// In cbFriendly mode we ALSO color those families on the map (CB_EXTRA_ORDER) —
+// leaving them gray would contradict the whole point of the mode, since the CB
+// palette defines distinct hues for them and the legend/panel already show them.
+// This asymmetry is deliberate: default unchanged, colorblind mode consistent.
 
 import type { ColorVisionMode } from './colorVisionMode';
 import { warningColorsFor, fallbackColorFor } from './alerts';
 import { tornadoCategoryColorsFor } from './tornado';
 
-const EVENT_COLOR_ORDER = [
+const DEFAULT_EVENT_ORDER = [
   'Tornado Warning',
   'Tornado Watch',
   'Severe Thunderstorm Warning',
@@ -593,10 +610,14 @@ const EVENT_COLOR_ORDER = [
   'Flood Statement',
 ] as const;
 
+const CB_EXTRA_ORDER = ['Freeze Warning', 'Freeze Watch', 'Special Weather Statement'] as const;
+
 export function buildEventColorExpression(mode: ColorVisionMode): unknown[] {
   const colors = warningColorsFor(mode);
+  const events =
+    mode === 'cbFriendly' ? [...DEFAULT_EVENT_ORDER, ...CB_EXTRA_ORDER] : DEFAULT_EVENT_ORDER;
   const cases: unknown[] = [];
-  for (const event of EVENT_COLOR_ORDER) {
+  for (const event of events) {
     cases.push(event, colors[event]);
   }
   return ['match', ['get', 'event'], ...cases, fallbackColorFor(mode)];
@@ -931,11 +952,12 @@ git commit -m "feat: drive map legend swatches from the active color-vision pale
 
 ---
 
-## Task 7: Wire AlertsPanel + the map popup to the active palette
+## Task 7: Wire AlertsPanel to the active palette
 
 **Files:**
 - Modify: `src/components/AlertsPanel.tsx:4-12, 51-67, ~145-149`
-- Modify: `src/components/WeatherMap.tsx:1838-1840`
+
+(The map popup in `WeatherMap.tsx` also reads the baked `tornadoColor`, but its fix lives in Task 8 — it depends on the `colorVisionMode` value introduced there, so doing it here would commit a state that fails `npm run typecheck`. Task 7 stays AlertsPanel-only and commits clean.)
 
 - [ ] **Step 1: Update AlertsPanel imports**
 
@@ -1009,36 +1031,16 @@ Replace it with:
 
 (If a `mode` is already in scope in that component from another edit, do not declare it twice — reuse it.)
 
-- [ ] **Step 4: Make the WeatherMap popup color mode-aware**
-
-`WeatherMap.tsx` already has `colorVisionMode` in scope after Task 8; but this popup edit is independent, so read it from the same source. First ensure `tornadoColor` is imported (handled in Task 8 Step 1 — if doing Task 7 before Task 8, add `import { tornadoColor } from '@/lib/tornado';` to WeatherMap's imports).
-
-Replace the popup color (currently `src/components/WeatherMap.tsx:1838-1840`):
-
-```tsx
-                  color:
-                    selectedAlert.properties.tornadoColor ??
-                    colorForEvent(selectedAlert.properties.event),
-```
-
-with:
-
-```tsx
-                  color: selectedAlert.properties.tornado
-                    ? tornadoColor(selectedAlert.properties.tornado, colorVisionMode)
-                    : colorForEvent(selectedAlert.properties.event, colorVisionMode),
-```
-
-- [ ] **Step 5: Typecheck**
+- [ ] **Step 4: Typecheck**
 
 Run: `npm run typecheck`
-Expected: `colorVisionMode is not defined` in WeatherMap.tsx IF Task 8 has not run yet. That is expected — Task 8 introduces it. If you are running tasks in order, do Task 8 next and typecheck there. Otherwise, the AlertsPanel half should typecheck clean on its own.
+Expected: no errors. AlertsPanel is self-contained — `useColorVisionMode` and `tornadoColor` are already defined (Tasks 1, 3), so this commits clean.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/components/AlertsPanel.tsx src/components/WeatherMap.tsx
-git commit -m "feat: recolor alerts panel and map popup for color-vision mode"
+git add src/components/AlertsPanel.tsx
+git commit -m "feat: recolor alerts panel for color-vision mode"
 ```
 
 ---
@@ -1150,6 +1152,16 @@ Add this effect immediately after the existing tornado-visibility effect that en
       if (m.getLayer(id)) m.setPaintProperty(id, 'line-color', eventColor);
     }
 
+    // Storm-motion overlays are tinted by the SAME eventColor expression at
+    // init (WeatherMap.tsx motion-line / -origin / -ticks / -head), so they
+    // must be recolored here too or they'd strand the old palette after a
+    // toggle. Each uses a different paint key for the color.
+    if (m.getLayer('motion-line')) m.setPaintProperty('motion-line', 'line-color', eventColor);
+    for (const id of ['motion-origin', 'motion-ticks']) {
+      if (m.getLayer(id)) m.setPaintProperty(id, 'circle-color', eventColor);
+    }
+    if (m.getLayer('motion-head')) m.setPaintProperty('motion-head', 'icon-color', eventColor);
+
     const tornadoColorExpr = buildTornadoColorExpression(
       colorVisionMode,
     ) as maplibregl.ExpressionSpecification;
@@ -1167,16 +1179,36 @@ Add this effect immediately after the existing tornado-visibility effect that en
   }, [mapReady, colorVisionMode]);
 ```
 
-- [ ] **Step 6: Typecheck + full test run**
+- [ ] **Step 6: Make the WeatherMap popup color mode-aware**
+
+The selected-alert popup reads the baked `tornadoColor` property (always the default-palette hex). Now that `colorVisionMode` (Step 3) and `tornadoColor` (Step 1 import) are in scope, fix it.
+
+Replace the popup color (currently `src/components/WeatherMap.tsx:1838-1840`):
+
+```tsx
+                  color:
+                    selectedAlert.properties.tornadoColor ??
+                    colorForEvent(selectedAlert.properties.event),
+```
+
+with:
+
+```tsx
+                  color: selectedAlert.properties.tornado
+                    ? tornadoColor(selectedAlert.properties.tornado, colorVisionMode)
+                    : colorForEvent(selectedAlert.properties.event, colorVisionMode),
+```
+
+- [ ] **Step 7: Typecheck + full test run**
 
 Run: `npm run typecheck && npm test`
-Expected: no type errors (this also resolves the `colorVisionMode is not defined` from Task 7), all tests pass.
+Expected: no type errors, all tests pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/components/WeatherMap.tsx
-git commit -m "feat: recolor map alert layers and radar for color-vision mode"
+git commit -m "feat: recolor map alert layers, motion, radar, and popup for color-vision mode"
 ```
 
 ---
@@ -1207,8 +1239,8 @@ Confirm:
 
 ## Self-Review
 
-- **Spec coverage:** Preferences store (Task 1) ✓; mode-aware alert palette (Task 2) ✓; tornado ramp (Task 3) ✓; map color expressions incl. radar (Tasks 4, 8) ✓; legend (Task 5/6) ✓; side panel + popup (Task 7) ✓; settings gear/panel (Task 5) ✓; testing incl. default-look regression (Tasks 2, 3, 4, 5) ✓; verification (Task 9) ✓.
+- **Spec coverage:** Preferences store (Task 1) ✓; mode-aware alert palette (Task 2) ✓; tornado ramp (Task 3) ✓; map color expressions incl. alert fills/outlines, storm-motion overlays, and radar (Tasks 4, 8) ✓; legend (Task 6) ✓; side panel (Task 7) + map popup (Task 8) ✓; settings gear/panel (Task 5) ✓; testing incl. default-look regression (Tasks 2, 3, 4, 5) ✓; verification (Task 9) ✓.
 - **Default-look guarantee:** Locked by `alertPaint.test.ts` (default expression deep-equals the legacy literal) + `alerts.test.ts`/`tornado.test.ts` default-mode regression cases + radar defaults to MapLibre no-op values.
 - **Type consistency:** `ColorVisionMode` defined once in `colorVisionMode.ts`; selectors `warningColorsFor`/`fallbackColorFor`/`tornadoCategoryColorsFor` and builders `buildEventColorExpression`/`buildTornadoColorExpression` are named identically everywhere they appear; store API `getPreferences`/`setColorVisionMode`/`subscribePreferences`/`useColorVisionMode`/`__resetPreferencesForTests` consistent across store + tests + components.
 - **Placeholder scan:** none.
-- **Known pre-existing quirk left intact (intentional, documented in Task 4):** Freeze* and Special Weather Statement render gray on the map (legend/panel still color them); not "fixed" here to honor the no-visual-change constraint.
+- **Pre-existing map quirk (documented in Task 4):** Freeze* and Special Weather Statement render gray on the map in DEFAULT mode (legend/panel still color them) — left intact to honor the no-visual-change constraint. In cbFriendly mode they ARE colored on the map (CB_EXTRA_ORDER), since gray would defeat the accessibility goal.
