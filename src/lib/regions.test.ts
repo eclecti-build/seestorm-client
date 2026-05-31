@@ -6,6 +6,7 @@ import {
   STATE_TO_REGION,
   NAME_TO_CODE,
   regionForCode,
+  statesByName,
   type RegionId,
 } from './regions';
 
@@ -88,5 +89,30 @@ describe('regions — lookups', () => {
     for (const [code, name] of Object.entries(STATE_NAMES)) {
       expect(NAME_TO_CODE[name]).toBe(code);
     }
+  });
+});
+
+describe('statesByName', () => {
+  it('orders codes by full state name (A→Z), independent of input order', () => {
+    // Region members are stored roughly north-to-south; the picker wants A→Z.
+    const south = REGIONS.find((r) => r.id === 'south')!;
+    const sorted = statesByName(south.members);
+    const names = sorted.map((c) => STATE_NAMES[c]);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+    expect(sorted[0]).toBe('AL'); // Alabama sorts first
+  });
+
+  it('sorts by name rather than code (Delaware before District of Columbia)', () => {
+    expect(statesByName(['DC', 'DE'])).toEqual(['DE', 'DC']);
+  });
+
+  it('does not mutate its input', () => {
+    const input = Object.freeze(['TX', 'AL']);
+    expect(statesByName(input)).toEqual(['AL', 'TX']);
+    expect(input).toEqual(['TX', 'AL']);
+  });
+
+  it('falls back to the raw code for codes with no known name', () => {
+    expect(statesByName(['ZZ', 'AL'])).toEqual(['AL', 'ZZ']);
   });
 });
