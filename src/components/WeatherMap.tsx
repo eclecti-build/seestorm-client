@@ -280,6 +280,10 @@ export default function WeatherMap() {
   //                  history.length (live, rightmost when forecast is hidden)
   //                  history.length+1 .. +HRRR_FRAME_COUNT (forecast, opt-in)
   const sliderMax = scrubberMax(history.length, showForecast);
+  // Where the live edge sits along the track (0..1). Matches the native thumb's
+  // travel (thumb centre = radius + fraction × (width − thumbWidth)), so the
+  // "now" marker and the forecast striations line up with the live dot.
+  const liveFraction = sliderMax > 0 ? history.length / sliderMax : 1;
   const isForecast = sliderValue > history.length;
   const isLive = !isForecast && (history.length === 0 || sliderValue === history.length);
   // Minutes ahead of now for the current forecast frame (0 when not forecasting).
@@ -1939,22 +1943,44 @@ export default function WeatherMap() {
                   {isLive ? '● LIVE' : 'Go to LIVE'}
                 </button>
 
-                <input
-                  type="range"
-                  min={0}
-                  max={sliderMax}
-                  value={sliderValue}
-                  onChange={(e) => {
-                    setIsPlaying(false);
-                    setSliderValue(Number(e.target.value));
-                  }}
-                  className={`flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700 ss-scrubber${
-                    isLive ? ' ss-scrubber-live' : ''
-                  }`}
-                  aria-label={`Scrub through radar history, live${
-                    showForecast ? ', and forecast' : ''
-                  }`}
-                />
+                <div className="relative flex-1 h-2">
+                  {/* Track. Observed past/live is solid grey; once the forecast
+                      is revealed, the region right of "now" is amber-striated so
+                      it reads as model forecast, with a dashed marker at the live
+                      edge showing exactly where observed radar ends. */}
+                  <div className="absolute inset-0 rounded-lg bg-gray-700 overflow-hidden">
+                    {showForecast && (
+                      <div
+                        className="ss-forecast-stripes absolute inset-y-0 right-0"
+                        style={{ left: `calc(${liveFraction} * (100% - 1rem) + 0.5rem)` }}
+                        aria-hidden="true"
+                      />
+                    )}
+                  </div>
+                  {showForecast && (
+                    <div
+                      className="ss-now-marker pointer-events-none absolute inset-y-[-3px]"
+                      style={{ left: `calc(${liveFraction} * (100% - 1rem) + 0.5rem)` }}
+                      aria-hidden="true"
+                    />
+                  )}
+                  <input
+                    type="range"
+                    min={0}
+                    max={sliderMax}
+                    value={sliderValue}
+                    onChange={(e) => {
+                      setIsPlaying(false);
+                      setSliderValue(Number(e.target.value));
+                    }}
+                    className={`absolute inset-0 w-full h-2 appearance-none cursor-pointer bg-transparent ss-scrubber${
+                      isLive ? ' ss-scrubber-live' : ''
+                    }`}
+                    aria-label={`Scrub through radar history, live${
+                      showForecast ? ', and forecast' : ''
+                    }`}
+                  />
+                </div>
 
                 <div className="text-xs text-gray-300 font-mono shrink-0 w-44 text-right">
                   {historicalLabel}

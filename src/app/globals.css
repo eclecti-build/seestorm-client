@@ -120,6 +120,39 @@ body.ss-scroll {
   background: #ef4444;
   cursor: pointer;
 }
+/* Track is drawn by an overlay behind the input; keep Firefox's native track
+ * transparent so the overlay (and its forecast striations) show through. */
+.ss-scrubber::-moz-range-track {
+  background: transparent;
+}
+
+/* Forecast region of the scrubber: amber diagonal striations so the stretch of
+ * timeline past "now" reads as model forecast, not observed radar. The stripe
+ * pattern (not just colour) carries the meaning, so it survives color-vision
+ * deficiency. */
+.ss-forecast-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(245, 158, 11, 0.5) 0,
+    rgba(245, 158, 11, 0.5) 2px,
+    transparent 2px,
+    transparent 6px
+  );
+}
+
+/* Dashed marker at the live edge ("now") when the forecast is revealed — a
+ * clean light dash so it's obvious where observed radar ends and the forecast
+ * begins. */
+.ss-now-marker {
+  width: 2px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    #e5e7eb 0,
+    #e5e7eb 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
 
 @keyframes ss-scrubber-pulse {
   0%,
@@ -137,9 +170,15 @@ body.ss-scroll {
   animation: ss-scrubber-pulse 1.8s ease-in-out infinite;
 }
 
-/* Reduced-motion: drop the pulse but keep a static ring so "live" still reads. */
+/* Reduced-motion: drop the pulse but keep a static ring so "live" still reads.
+ * Vendor range pseudo-elements must be in SEPARATE rules — a selector list
+ * mixing ::-webkit-* and ::-moz-* is invalid in both engines, which would drop
+ * the whole rule and leave the pulse running under reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
-  .ss-scrubber-live::-webkit-slider-thumb,
+  .ss-scrubber-live::-webkit-slider-thumb {
+    animation: none;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.55);
+  }
   .ss-scrubber-live::-moz-range-thumb {
     animation: none;
     box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.55);
