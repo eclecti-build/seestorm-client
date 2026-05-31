@@ -122,6 +122,15 @@ export function regionForCode(code: string): Region | null {
   return REGIONS.find((r) => r.id === id) ?? null;
 }
 
+/**
+ * Sort state codes by their full display name (A→Z). The picker uses this so a
+ * drilled region's states are easy to scan; the canonical `members` order stays
+ * north-to-south for the region map. Pure — returns a new array.
+ */
+export function statesByName(codes: ReadonlyArray<string>): string[] {
+  return [...codes].sort((a, b) => (STATE_NAMES[a] ?? a).localeCompare(STATE_NAMES[b] ?? b));
+}
+
 // Membership guard mirroring isSupportedState, scoped to drill-down reachability.
 export function isReachable(code: string): boolean {
   return COVERAGE.includes(code as (typeof COVERAGE)[number]);

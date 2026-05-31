@@ -121,3 +121,53 @@ export function projectContiguous(geojson: FeatureCollection): ProjectedMap {
 
   return { width: VIEW_WIDTH, height, features };
 }
+
+export interface Box {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/**
+ * Union bounding box of a region's projected features, or null if the region
+ * has no features in this projection. Cheap — folds the per-feature `bounds`.
+ */
+export function regionBounds(
+  features: ReadonlyArray<ProjectedFeature>,
+  region: RegionId,
+): Box | null {
+  let box: Box | null = null;
+  for (const f of features) {
+    if (f.region !== region) continue;
+    box = box
+      ? {
+          minX: Math.min(box.minX, f.bounds.minX),
+          minY: Math.min(box.minY, f.bounds.minY),
+          maxX: Math.max(box.maxX, f.bounds.maxX),
+          maxY: Math.max(box.maxY, f.bounds.maxY),
+        }
+      : { ...f.bounds };
+  }
+  return box;
+}
+
+/**
+ * An SVG `viewBox` string ("x y w h") that frames a single region, padded by
+ * `padFraction` of its larger dimension so states don't touch the edges.
+ * Returns null when the region has no features (caller falls back to chips).
+ */
+export function regionViewBox(
+  features: ReadonlyArray<ProjectedFeature>,
+  region: RegionId,
+  padFraction = 0.08,
+): string | null {
+  const b = regionBounds(features, region);
+  if (!b) return null;
+  const w = b.maxX - b.minX;
+  const h = b.maxY - b.minY;
+  const pad = Math.max(w, h, 1) * padFraction;
+  return `${(b.minX - pad).toFixed(1)} ${(b.minY - pad).toFixed(1)} ${(w + pad * 2).toFixed(
+    1,
+  )} ${(h + pad * 2).toFixed(1)}`;
+}

@@ -8,9 +8,9 @@ import {
   type UserLocation,
 } from '@/lib/userLocation';
 import { COVERAGE, STATE_CENTERS, STATE_NAMES, STATE_VIEW_ZOOM } from '@/lib/coverage';
-import { OFFSHORE, REGIONS, regionForCode, type RegionId } from '@/lib/regions';
+import { OFFSHORE, REGIONS, regionForCode, statesByName, type RegionId } from '@/lib/regions';
 import { lookupZip, normalizeZip } from '@/lib/zipLookup';
-import UsRegionMap, { REGION_THEME } from './UsRegionMap';
+import UsRegionMap, { RegionStateMap, REGION_THEME } from './UsRegionMap';
 
 const ZIP_VIEW_ZOOM = 8;
 
@@ -206,8 +206,14 @@ export default function LocationChip({ onLocationChange }: LocationChipProps) {
                 <span className="text-gray-500 truncate min-w-0">· {drilled.blurb}</span>
                 <span className="sr-only">Back to regions</span>
               </button>
+              <RegionStateMap
+                active={open}
+                region={drilled.id}
+                selectedState={selectedState}
+                onPick={handlePick}
+              />
               <StateList
-                codes={drilled.members}
+                codes={statesByName(drilled.members)}
                 selectedState={selectedState}
                 onPick={handlePick}
                 pulse

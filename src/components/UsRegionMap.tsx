@@ -3,7 +3,12 @@
 import { useEffect, useState } from 'react';
 import type { FeatureCollection } from 'geojson';
 import { REGIONS, type RegionId } from '@/lib/regions';
-import { projectContiguous, type ProjectedMap } from '@/lib/usProjection';
+import {
+  projectContiguous,
+  regionBounds,
+  regionViewBox,
+  type ProjectedMap,
+} from '@/lib/usProjection';
 
 // Muted "atlas on midnight" palette: seven hues at similar chroma/lightness so
 // the map reads as one designed system rather than a rainbow, while staying
@@ -187,6 +192,105 @@ function SvgMap({
                   strokeLinejoin="round"
                 />
               ))}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+interface RegionStateMapProps {
+  /** Gates the lazy GeoJSON fetch (the picker being open). */
+  active: boolean;
+  region: RegionId;
+  selectedState: string | null;
+  onPick: (code: string) => void;
+}
+
+/**
+ * Zoomed map of a single region's states, each individually selectable — the
+ * map half of the drill-down (the state chips are the other half). Reuses the
+ * module-cached projection, so it appears instantly after the region map has
+ * loaded. Renders nothing if the projection isn't available yet, so the caller
+ * still shows the chips as the always-present fallback.
+ */
+export function RegionStateMap({ active, region, selectedState, onPick }: RegionStateMapProps) {
+  const projected = useProjection(active);
+  const [hovered, setHovered] = useState<string | null>(null);
+
+  if (!projected) return null;
+  const viewBox = regionViewBox(projected.features, region);
+  const box = regionBounds(projected.features, region);
+  if (!viewBox || !box) return null;
+
+  const members = projected.features.filter((f) => f.region === region);
+  const accent = REGION_THEME[region];
+  const label = REGIONS.find((r) => r.id === region)?.label ?? region;
+  // Size labels/strokes off the framed region so codes stay legible whether the
+  // region is a tall strip (Plains) or a tight cluster (New England).
+  const span = Math.max(box.maxX - box.minX, box.maxY - box.minY);
+  const labelSize = span * 0.05;
+
+  return (
+    <div
+      className="rounded-md overflow-hidden ring-1 ring-white/10"
+      style={{ background: 'radial-gradient(120% 120% at 50% 0%, #131c2e 0%, #0a0f1a 70%)' }}
+    >
+      <svg
+        viewBox={viewBox}
+        className="w-full h-auto block"
+        style={{ maxHeight: '32vh' }}
+        role="group"
+        aria-label={`States in the ${label} region — pick one`}
+      >
+        {members.map((f) => {
+          const isActive = selectedState === f.code;
+          const isHot = hovered === f.code;
+          return (
+            <g
+              key={f.code}
+              role="button"
+              tabIndex={0}
+              aria-label={f.name}
+              aria-pressed={isActive}
+              onClick={() => onPick(f.code)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onPick(f.code);
+                }
+              }}
+              onMouseEnter={() => setHovered(f.code)}
+              onMouseLeave={() => setHovered(null)}
+              onFocus={() => setHovered(f.code)}
+              onBlur={() => setHovered(null)}
+              className="cursor-pointer outline-none"
+            >
+              <title>{f.name}</title>
+              <path
+                d={f.d}
+                fill={accent}
+                fillOpacity={isActive ? 1 : isHot ? 0.85 : 0.5}
+                stroke={isActive || isHot ? '#e8eefc' : '#0a0f1a'}
+                strokeWidth={(isActive || isHot ? 0.12 : 0.06) * labelSize}
+                strokeLinejoin="round"
+              />
+              <text
+                x={f.centroid.x}
+                y={f.centroid.y}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={labelSize}
+                fontWeight={700}
+                fill="#f8fafc"
+                stroke="#0a0f1a"
+                strokeWidth={labelSize * 0.14}
+                paintOrder="stroke"
+                className="pointer-events-none select-none font-mono"
+              >
+                {f.code}
+              </text>
             </g>
           );
         })}
