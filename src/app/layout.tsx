@@ -17,15 +17,15 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://seestorm.org'),
   applicationName: 'SeeStorm',
   title: {
-    default: 'SeeStorm — Great Lakes Severe Weather',
+    default: 'SeeStorm — US Severe Weather',
     template: '%s — SeeStorm',
   },
   description:
-    'Ad-free, real-time severe weather visualization for Great Lakes communities. Built on National Weather Service data.',
+    'Ad-free, real-time severe weather visualization for communities across the United States. Built on National Weather Service data.',
   openGraph: {
-    title: 'SeeStorm — Great Lakes Severe Weather',
+    title: 'SeeStorm — US Severe Weather',
     description:
-      'Ad-free, real-time severe weather visualization for Great Lakes communities. Built on National Weather Service data.',
+      'Ad-free, real-time severe weather visualization for communities across the United States. Built on National Weather Service data.',
     siteName: 'SeeStorm',
     locale: 'en_US',
     type: 'website',

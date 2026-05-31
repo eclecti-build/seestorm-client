@@ -2,7 +2,7 @@
 //
 // On a brand-new visit (no saved UserLocation in localStorage) we ask the
 // Worker's `/v1/geo` endpoint what state the requesting IP appears to be in.
-// If the answer is one of the 8 supported Great Lakes states, we silently
+// If the answer is one of the supported states, we silently
 // pre-fill the picker so the user lands on a sensible default instead of an
 // empty map. Any failure mode (bad fetch, missing field, unsupported state,
 // timeout) is a silent no-op — the picker stays empty, exactly matching
@@ -70,7 +70,7 @@ function isGeoSuggestion(value: unknown): value is GeoSuggestion {
 
 /**
  * Fetch `/v1/geo` and return a fully-formed `UserLocation` (with
- * `source: 'ip'`) iff the inferred state is one of the 8 supported codes.
+ * `source: 'ip'`) iff the inferred state is one of the supported codes.
  * Returns null on any failure — network error, non-2xx, malformed body,
  * empty/unsupported state, or timeout. Never throws.
  *

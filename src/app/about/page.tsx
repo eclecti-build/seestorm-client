@@ -4,7 +4,7 @@ import type { Metadata } from 'next';
 export const metadata: Metadata = {
   title: 'About',
   description:
-    'SeeStorm is a non-profit, ad-free severe weather visualization for the Great Lakes, built on National Weather Service data.',
+    'SeeStorm is a non-profit, ad-free severe weather visualization for the United States, built on National Weather Service data.',
 };
 
 export default function AboutPage() {
@@ -28,7 +28,8 @@ export default function AboutPage() {
           <h2 className="mb-2 text-base font-semibold">Why this exists</h2>
           <p className="text-[var(--ss-ink)]">
             Severe weather data keeps people safe. SeeStorm keeps it free, open, and easy to see. No
-            ads, no paywalls, no account required. Built for the Great Lakes.
+            ads, no paywalls, no account required. Born in Wisconsin during the April 2026 tornado
+            outbreak, it now covers severe weather across the United States.
           </p>
         </section>
 
@@ -150,7 +151,7 @@ export default function AboutPage() {
             />
             eclecti-build
           </a>{' '}
-          for the Great Lakes. © 2026 SeeStorm contributors · MIT.
+          across the United States. © 2026 SeeStorm contributors · MIT.
         </footer>
       </div>
     </div>

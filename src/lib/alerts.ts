@@ -219,12 +219,12 @@ export interface IngestAlert {
   expires_at: string;
   url?: string | null;
   storm_motion?: StormMotion | null;
-  // v2 schema additions — multi-state Great Lakes coverage.
+  // v2 schema additions — multi-state coverage.
   // `area_state` is the primary state code (USPS 2-letter, e.g. "WI") when the
   // alert is single-state; null when ingest cannot determine a primary.
   // `states` is the full set of state codes the alert touches (e.g. for a
   // cross-border Tornado Watch). Both are optional/additive so legacy v1
-  // snapshots (single-state Wisconsin) deserialize unchanged.
+  // snapshots (single-state) deserialize unchanged.
   area_state?: string | null;
   states?: string[];
   // Additive (no schema bump): the normalized tornado detection axis
@@ -234,7 +234,7 @@ export interface IngestAlert {
 }
 
 /**
- * Ingest snapshot. Schema v2 (multi-state Great Lakes) carries:
+ * Ingest snapshot. Schema v2 (multi-state) carries:
  *   - `schema_version: 2`
  *   - `areas: string[]` (replaces v1's single `area: string`)
  *

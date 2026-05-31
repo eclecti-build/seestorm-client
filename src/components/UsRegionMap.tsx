@@ -12,7 +12,7 @@ import {
 
 // Muted "atlas on midnight" palette: seven hues at similar chroma/lightness so
 // the map reads as one designed system rather than a rainbow, while staying
-// distinguishable on the deep-navy app background. The Great Lakes home turf
+// distinguishable on the deep-navy app background. The Great Lakes region
 // borrows the brand's lake-blue.
 export const REGION_THEME: Readonly<Record<RegionId, string>> = Object.freeze({
   west: '#4f8a8b',

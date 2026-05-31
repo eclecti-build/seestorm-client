@@ -35,7 +35,7 @@ export interface Region {
 /**
  * The seven contiguous regions, ordered west → east. Groupings are
  * weather-/geography-sensible rather than strict Census divisions: they keep
- * the Great Lakes home turf together and split the dense Northeast into
+ * the Great Lakes states together and split the dense Northeast into
  * Mid-Atlantic + New England so every drill-down list stays a comfortable
  * 4–10 states.
  */

@@ -1,0 +1,26 @@
+# SeeStorm
+
+> Ad-free, real-time severe weather visualization for the United States, built on live National Weather Service data. Non-profit, open source — no ads, no paywalls, no account required.
+
+SeeStorm renders active NWS watches, warnings, and advisories — plus radar and GIS tornado paths — in the NWS-standard severity colors, as they're issued. Born in Wisconsin during the April 2026 tornado outbreak; now nationwide.
+
+## Coverage
+- All 50 U.S. states, Washington D.C., and the five U.S. territories (Puerto Rico, Guam, U.S. Virgin Islands, American Samoa, Northern Mariana Islands)
+- Data source: U.S. National Weather Service (weather.gov); radar via the Iowa Environmental Mesonet
+- Alert severity colors follow NWS standards
+
+## Principles
+- No ads, no paywalls, no account required — public safety data stays frictionless
+- Authoritative sources only: NWS is the source of truth; we visualize and contextualize, we do not invent data
+- Open source under the MIT license
+
+## Site
+- Map & alerts: https://seestorm.org
+- About: https://seestorm.org/about
+
+## Source
+- Front-end (this site): https://github.com/eclecti-build/seestorm-client
+- NWS data ingest service: https://github.com/eclecti-build/seestorm-ingest
+
+## Operator
+Operated as a public service by eclecti-build (https://eclecti-build.com). Contact: sean@eclecti-build.com

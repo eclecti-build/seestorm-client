@@ -56,7 +56,7 @@ describe('regions — coverage invariants', () => {
     }
   });
 
-  it('keeps the Great Lakes home turf together in the midwest region', () => {
+  it('keeps the Great Lakes states together in the midwest region', () => {
     const midwest = REGIONS.find((r) => r.id === 'midwest');
     expect(midwest).toBeDefined();
     expect(midwest?.members).toContain('WI');

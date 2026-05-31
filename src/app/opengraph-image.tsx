@@ -5,7 +5,7 @@ import { ImageResponse } from 'next/og';
 export const dynamic = 'force-static';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
-export const alt = 'SeeStorm — Great Lakes Severe Weather';
+export const alt = 'SeeStorm — US Severe Weather';
 
 export default function OpengraphImage() {
   return new ImageResponse(
@@ -46,7 +46,7 @@ export default function OpengraphImage() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ fontSize: 88, fontWeight: 600, letterSpacing: -1.5 }}>SeeStorm</div>
         <div style={{ fontSize: 28, color: '#94A3B8', maxWidth: 640, lineHeight: 1.3 }}>
-          Ad-free, real-time severe weather for the Great Lakes. Built on NWS data.
+          Ad-free, real-time severe weather for the United States. Built on NWS data.
         </div>
       </div>
     </div>,
