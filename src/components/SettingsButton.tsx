@@ -4,12 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import { Settings } from 'lucide-react';
 import SettingsPanel from './SettingsPanel';
 
-// Gear control. Mounted as an absolute overlay (not a MapLibre IControl) so the
-// React-controlled panel needs no portal. Anchored bottom-right, stacked ABOVE
-// the ChromeOverlay brand/credit chips (which sit at bottom 18px) so it shares
-// the meta-chrome corner without overlapping them — the bottom offset clears
-// that ~52px chip cluster. Right offset matches ChromeOverlay's 0.75rem so the
-// controls line up. Placement is a verify-time tunable.
+// Gear control. Rendered inside MapControlStack (not a MapLibre IControl) so the
+// React-controlled panel needs no portal. Position-agnostic: the stack owns the
+// bottom-right anchoring, so this is just a `relative` wrapper holding the button
+// and its pop-up panel. ~44px target (Apple HIG min) to match the About button.
 export default function SettingsButton() {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -31,10 +29,7 @@ export default function SettingsButton() {
   }, [open]);
 
   return (
-    <div
-      ref={rootRef}
-      className="absolute z-20 bottom-[calc(84px+env(safe-area-inset-bottom))] right-[calc(0.75rem+env(safe-area-inset-right))]"
-    >
+    <div ref={rootRef} className="relative">
       {open && (
         <div
           role="dialog"
@@ -51,9 +46,9 @@ export default function SettingsButton() {
         aria-expanded={open}
         aria-label="Settings"
         aria-controls="settings-dialog"
-        className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ss-border)] bg-[rgba(10,15,26,0.85)] text-[var(--ss-muted)] shadow-xl backdrop-blur-sm transition hover:bg-[rgba(10,15,26,0.95)] hover:text-[var(--ss-ink)] cursor-pointer"
+        className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--ss-border)] bg-[rgba(10,15,26,0.85)] text-[var(--ss-muted)] shadow-xl backdrop-blur-sm transition hover:bg-[rgba(10,15,26,0.95)] hover:text-[var(--ss-ink)] cursor-pointer"
       >
-        <Settings size={18} strokeWidth={1.75} aria-hidden="true" />
+        <Settings size={20} strokeWidth={1.75} aria-hidden="true" />
       </button>
     </div>
   );

@@ -2,8 +2,8 @@
 
 /*
  * SeeStorm brand tokens.  Mirror of brand/tokens/colors.css in the umbrella
- * repo.  Used by ChromeOverlay and any non-alert UI surface.  NWS severity
- * colors are defined in src/lib/alerts.ts and must not be overridden here.
+ * repo.  Used by the map chrome (MapControlStack) and any non-alert UI surface.
+ * NWS severity colors are defined in src/lib/alerts.ts and must not be overridden here.
  */
 :root {
   --ss-bg: #0a0f1a;
