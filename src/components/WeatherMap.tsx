@@ -1030,7 +1030,10 @@ export default function WeatherMap() {
       style: mapStyle,
       center: initialCenter,
       zoom: initialZoom,
-      attributionControl: {},
+      // Disable the default (always-expanded) attribution; a compact one is added
+      // below so the license-required CARTO/OSM/Mesonet credits collapse to a
+      // small "ⓘ" instead of an always-on text strip in the bottom thumb zone.
+      attributionControl: false,
       // Bound GPU memory pressure. Default cache size is derived from viewport
       // and on a full-screen map can grow unbounded across pan/zoom — combined
       // with the dual radar raster sources + the bundled 9-state county vector
@@ -1049,6 +1052,11 @@ export default function WeatherMap() {
       }),
       'top-right',
     );
+    // Compact attribution in the freed bottom-left corner: a small "ⓘ" that
+    // expands to the source credits (CARTO/OSM from the basemap style, NEXRAD via
+    // Mesonet from the radar source). Keeps the legal attribution accessible
+    // without the always-on text strip the brand chips used to crowd.
+    m.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
 
     m.on('load', () => {
       // Lift roads and place labels out from under the radar + alert overlays.
