@@ -228,6 +228,18 @@ export default {
       return handleApiRequest(request, url, env);
     }
 
+    // /alert/{id} — deep-link to alert detail. The static export produces
+    // out/alert.html as the shell; the client-side JS reads the ID from the
+    // URL path. Rewrite the request so ASSETS serves the shell page.
+    if (url.pathname.startsWith('/alert/') && url.pathname.length > '/alert/'.length) {
+      const rewritten = new Request(new URL('/alert', url.origin), request);
+      const alertResponse = await env.ASSETS.fetch(rewritten);
+      const wrapped = new Response(alertResponse.body, alertResponse);
+      applyBaselineSecurityHeaders(wrapped.headers);
+      applyCspReportOnly(wrapped.headers);
+      return wrapped;
+    }
+
     // Anything not under /v1/ is static Next.js content. Wrap the ASSETS
     // response so security headers land on every HTML page (the primary
     // CSP target), 404 pages, and the root document.
