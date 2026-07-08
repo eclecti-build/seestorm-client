@@ -30,7 +30,11 @@ import { STATE_VIEW_ZOOM } from '@/lib/coverage';
 import { MAP_LOAD_TIMEOUT_MS, POLL_INTERVAL_MS } from '@/lib/constants';
 import { fetchJsonWithRetry, isAbortError } from '@/lib/fetchWithRetry';
 import { useClockOffset } from '@/lib/useClockOffset';
-import { publishLiveFetchFailure, publishSnapshot } from '@/lib/snapshotStore';
+import {
+  publishLiveFetchFailure,
+  publishSnapshot,
+  validateResponseServerNowMs,
+} from '@/lib/snapshotStore';
 import AlertsPanel from './AlertsPanel';
 import LocationChip from './LocationChip';
 import MapLegend from './MapLegend';
@@ -572,13 +576,32 @@ export default function WeatherMap() {
   const fetchLive = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        const raw = await fetchJsonWithRetry('/v1/active-events.json', { signal });
+        let responseServerNowMs: number | null = null;
+        const raw = await fetchJsonWithRetry('/v1/active-events.json', {
+          signal,
+          onResponse: (resp) => {
+            const dateMs = Date.parse(resp.headers.get('date') ?? '');
+            if (!Number.isFinite(dateMs)) return;
+            const ageSec = Number.parseInt(resp.headers.get('age') ?? '0', 10);
+            const candidateMs = dateMs + (Number.isFinite(ageSec) ? ageSec * 1_000 : 0);
+            // REVIEW AMENDMENT: clamp before trusting it — see
+            // validateResponseServerNowMs (Steps 9-12 above). An implausible
+            // reading (>5min off the local clock) falls back to null here,
+            // which publishSnapshot then treats the same as "no Date header
+            // at all" (hasResponseServerNow === false in Task 4 Step 7).
+            responseServerNowMs = validateResponseServerNowMs(candidateMs);
+          },
+        });
         const snapshot = parseIngestSnapshot(raw);
-        // Calibrate clock offset against the server's generation timestamp,
-        // and publish into the global store so the root-layout StalenessBanner
-        // can render without threading props through the dynamic map import.
+        // Record the snapshot's generation timestamp for the map-local clock
+        // hook, then publish the Date+Age-calibrated server time into the
+        // global store so the root-layout StalenessBanner can render without
+        // threading props through the dynamic map import.
         recordServerTime(snapshot.generated_at_ms);
-        publishSnapshot(snapshot.generated_at_ms ?? null, { isLive: true });
+        publishSnapshot(snapshot.generated_at_ms ?? null, {
+          isLive: true,
+          responseServerNowMs,
+        });
         const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,

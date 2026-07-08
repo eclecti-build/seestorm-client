@@ -5,6 +5,7 @@ import {
   publishLiveFetchFailure,
   publishSnapshot,
   useSnapshotState,
+  validateResponseServerNowMs,
 } from './snapshotStore';
 
 describe('snapshotStore', () => {
@@ -187,5 +188,76 @@ describe('snapshotStore', () => {
     });
     expect(result.current.generatedAtMs).toBe(ts);
     expect(result.current.consecutiveLiveFailures).toBe(0);
+  });
+
+  it('prefers responseServerNowMs over generatedAtMs for clockOffset when both are present', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    const generatedAtMs = Date.now() - 50_000; // stale snapshot-generation ts (cache hit)
+    const responseServerNowMs = Date.now() + 1_000; // true server-now from Date+Age
+    act(() => {
+      publishSnapshot(generatedAtMs, { isLive: true, responseServerNowMs });
+    });
+    expect(result.current.generatedAtMs).toBe(generatedAtMs);
+    expect(result.current.clockOffset).toBe(1_000);
+  });
+
+  it('falls back to the generatedAtMs-derived offset when responseServerNowMs is absent', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    const ts = Date.now() + 3_000;
+    act(() => {
+      publishSnapshot(ts, { isLive: true });
+    });
+    expect(result.current.clockOffset).toBe(3_000);
+  });
+
+  it('falls back to the generatedAtMs-derived offset when responseServerNowMs is null', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    const ts = Date.now() + 3_000;
+    act(() => {
+      publishSnapshot(ts, { isLive: true, responseServerNowMs: null });
+    });
+    expect(result.current.clockOffset).toBe(3_000);
+  });
+
+  it('ignores responseServerNowMs when generatedAtMs is null/invalid (still clears both fields)', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    act(() => {
+      publishSnapshot(null, { isLive: true, responseServerNowMs: Date.now() });
+    });
+    expect(result.current.generatedAtMs).toBeNull();
+    expect(result.current.clockOffset).toBe(0);
+  });
+
+  describe('validateResponseServerNowMs', () => {
+    it('accepts a candidate within the trust threshold', () => {
+      const now = Date.now();
+      expect(validateResponseServerNowMs(now + 1_000, now)).toBe(now + 1_000);
+    });
+
+    it('accepts a candidate exactly at the trust threshold boundary', () => {
+      const now = Date.now();
+      expect(validateResponseServerNowMs(now + 5 * 60_000, now)).toBe(now + 5 * 60_000);
+    });
+
+    it('rejects (returns null) a candidate 10 minutes off from local time, and logs a console.warn', () => {
+      const now = Date.now();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const tenMinutesOff = now + 10 * 60_000;
+      expect(validateResponseServerNowMs(tenMinutesOff, now)).toBeNull();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toMatch(/Discarding Date\/Age clock calibration/);
+      warnSpy.mockRestore();
+    });
+
+    it('rejects a candidate that is implausibly far in the PAST too (drift is |diff|, not signed)', () => {
+      const now = Date.now();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(validateResponseServerNowMs(now - 10 * 60_000, now)).toBeNull();
+      warnSpy.mockRestore();
+    });
+
+    it('passes null through unchanged (no Date header parsed)', () => {
+      expect(validateResponseServerNowMs(null)).toBeNull();
+    });
   });
 });
