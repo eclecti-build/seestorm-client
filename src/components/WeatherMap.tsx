@@ -74,6 +74,17 @@ const RADAR_OPACITY_EXPR: ExpressionSpecification = [
 const CROSSFADE_MS = 300; // A↔B layer opacity crossfade
 const TILE_FADE_MS = 400; // MapLibre built-in in-tile fade
 
+// Reject a live snapshot whose generated_at_ms is more than this far
+// ahead of the client's own clock — a future-dated snapshot is either a
+// bad upstream payload or a client clock skew, and applying it would set
+// renderedGeneratedAtMsRef ahead of real time, silently poisoning the
+// monotonic guard against every subsequent (correctly-timed) snapshot.
+// 5 minutes is generous versus normal clock drift/CDN cache age while
+// still catching a genuinely bad timestamp. Mirrors the non-finite/<=0
+// guard idiom in useClockOffset.recordServerTime (src/lib/useClockOffset.ts)
+// — reject-and-bail on an out-of-bounds input rather than applying it.
+const MAX_FUTURE_SNAPSHOT_MS = 5 * 60 * 1000;
+
 // Colorblind radar recolor, applied to both raster radar layers via native
 // paint properties. Rotating green→blue and red→magenta + a small saturation/
 // contrast bump opens a brightness gap between light rain and heavy cores for
@@ -362,6 +373,13 @@ export default function WeatherMap() {
   // POLL_INTERVAL_MS tick to reach the map.
   const lastMapFeaturesRef = useRef<AlertsResponse | null>(null);
   const lastMotionAlertsRef = useRef<IngestAlert[] | null>(null);
+  // Last-applied LIVE snapshot's generated_at_ms. Guards against an
+  // older live response resolving AFTER a newer one (two overlapping
+  // fetchLive calls — e.g. the interval tick racing a
+  // visibilitychange-triggered refetch) and winning the startTransition
+  // race, which would visibly regress the map/alerts list to stale
+  // data. Historical scrubs never touch this ref — only fetchLive does.
+  const renderedGeneratedAtMsRef = useRef<number | null>(null);
 
   // User's saved state (if any) — drives the userState filter so the side
   // panel and map don't drown the user in alerts from the other 7 Great
@@ -593,6 +611,41 @@ export default function WeatherMap() {
           },
         });
         const snapshot = parseIngestSnapshot(raw);
+
+        // Monotonic guard: drop a response whose generated_at_ms is
+        // older than the last one we actually rendered. Without this, an
+        // older fetchLive call that happens to resolve AFTER a newer one
+        // would win the startTransition below and visibly regress the
+        // map/alerts to stale data (Tier 2 resilience hardening,
+        // 2026-07-08).
+        const incomingMs = snapshot.generated_at_ms;
+        if (
+          typeof incomingMs === 'number' &&
+          renderedGeneratedAtMsRef.current !== null &&
+          incomingMs < renderedGeneratedAtMsRef.current
+        ) {
+          return;
+        }
+        // Future-timestamp sanity bound (review amendment): compare against
+        // the calibrated serverNow() clock, not raw Date.now(), so Tier 1's
+        // clock-skew handling is not defeated by a slow local client clock.
+        // Reject WITHOUT updating renderedGeneratedAtMsRef and WITHOUT
+        // calling recordServerTime/publishSnapshot; calibrating from or
+        // publishing a suspect timestamp defeats the guard. The rejection
+        // still counts as a live-fetch failure so persistent bad payloads trip
+        // the Tier 1 degraded overlay instead of leaving a silently clean-
+        // looking frozen map. Fail open/over-warn, never silently freeze.
+        if (typeof incomingMs === 'number' && incomingMs > serverNow() + MAX_FUTURE_SNAPSHOT_MS) {
+          console.warn(
+            `Rejected snapshot with generated_at_ms too far in the future (${incomingMs}), possible clock skew or bad data`,
+          );
+          publishLiveFetchFailure();
+          return;
+        }
+        if (typeof incomingMs === 'number') {
+          renderedGeneratedAtMsRef.current = incomingMs;
+        }
+
         // Record the snapshot's generation timestamp for the map-local clock
         // hook, then publish the Date+Age-calibrated server time into the
         // global store so the root-layout StalenessBanner can render without
@@ -703,28 +756,40 @@ export default function WeatherMap() {
     };
   }, [isLive, sliderValue, history, fetchLive, fetchHistorical]);
 
-  // Fetch the history index from the Worker.
-  const fetchHistory = useCallback(
-    async (signal?: AbortSignal) => {
-      try {
-        const raw = await fetchJsonWithRetry('/v1/history?limit=60', { signal });
-        const data = raw as HistoryResponse;
-        // API returns newest-first; reverse so index 0 is oldest, len-1 is newest.
-        const ordered = data.snapshots.slice().reverse();
-        setHistory((prev) => {
-          // If the slider was on "live" (== prev.length), keep it on "live" after the list grows.
-          if (sliderValue === prev.length) {
-            setSliderValue(ordered.length);
-          }
-          return ordered;
-        });
-      } catch (err) {
-        if (isAbortError(err)) return;
-        console.error('Failed to fetch history index:', err);
-      }
-    },
-    [sliderValue],
-  );
+  const sliderValueRef = useRef(sliderValue);
+  useEffect(() => {
+    sliderValueRef.current = sliderValue;
+  }, [sliderValue]);
+
+  // Fetch the history index from the Worker. Deliberately has NO
+  // dependency on `sliderValue` — reads it from `sliderValueRef`
+  // instead. Depending on `sliderValue` directly made this callback's
+  // identity change on almost every "still on live" tick (see the
+  // setSliderValue call below, which fires whenever the slider sits at
+  // the live edge and history grows), which cascaded into the poll
+  // effect's dependency array below (fetchHistory is one of its deps)
+  // and tore down + recreated the AbortController, interval, and
+  // visibilitychange/focus listeners on nearly every 30s cycle —
+  // silently doubling request volume and aborting in-flight fetchLive
+  // calls (Tier 2 resilience hardening, 2026-07-08).
+  const fetchHistory = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const raw = await fetchJsonWithRetry('/v1/history?limit=60', { signal });
+      const data = raw as HistoryResponse;
+      // API returns newest-first; reverse so index 0 is oldest, len-1 is newest.
+      const ordered = data.snapshots.slice().reverse();
+      setHistory((prev) => {
+        // If the slider was on "live" (== prev.length), keep it on "live" after the list grows.
+        if (sliderValueRef.current === prev.length) {
+          setSliderValue(ordered.length);
+        }
+        return ordered;
+      });
+    } catch (err) {
+      if (isAbortError(err)) return;
+      console.error('Failed to fetch history index:', err);
+    }
+  }, []);
 
   // When in live mode, poll live + refresh history list every POLL_INTERVAL_MS.
   // All in-flight fetches are owned by a single AbortController per effect run
