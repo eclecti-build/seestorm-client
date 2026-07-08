@@ -40,3 +40,14 @@ export const MAP_LOAD_TIMEOUT_MS = 15_000;
 
 export const STALENESS_BANNER_COPY =
   'Live data is delayed. For active severe weather, check NWS.gov or NOAA Weather Radio.';
+
+/**
+ * Grace period after an alert's `expires` timestamp during which it is
+ * still shown (de-emphasized, EXPIRED-badged, demoted in sort order)
+ * rather than fully removed. See Task 3 design notes (2026-07-08 Tier 1
+ * plan) for the 15-minute justification. Matches the fail-open posture in
+ * alerts.ts (alertTouchesPoint/alertTouchesState) — we DEMOTE at
+ * `expires`, we do not DROP until this grace period has fully elapsed,
+ * and never drop on an unparseable `expires` at all.
+ */
+export const ALERT_EXPIRY_GRACE_MS = 15 * 60_000;

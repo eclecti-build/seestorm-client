@@ -13,6 +13,7 @@
 
 import { booleanPointInPolygon, point as turfPoint } from '@turf/turf';
 import type { ColorVisionMode } from './colorVisionMode';
+import { ALERT_EXPIRY_GRACE_MS } from './constants';
 
 // ---------------------------------------------------------------------------
 // Palette
@@ -363,6 +364,7 @@ export interface WeatherAlertProperties {
   tornadoLabelTitle?: string;
   /** On-map call-to-action; only set when confirmed. */
   tornadoAnnotation?: string;
+  expired?: boolean;
 }
 
 export interface WeatherAlert {
@@ -509,6 +511,35 @@ function byPriority(a: WeatherAlert, b: WeatherAlert): number {
   return priorityForEvent(a.properties.event) - priorityForEvent(b.properties.event);
 }
 
+export function isPastGracePeriod(
+  expiresIso: string,
+  nowMs: number,
+  graceMs: number = ALERT_EXPIRY_GRACE_MS,
+): boolean {
+  const expiresMs = Date.parse(expiresIso);
+  if (!Number.isFinite(expiresMs)) return false;
+  return nowMs - expiresMs > graceMs;
+}
+
+export function isExpiredInGrace(
+  expiresIso: string,
+  nowMs: number,
+  graceMs: number = ALERT_EXPIRY_GRACE_MS,
+): boolean {
+  const expiresMs = Date.parse(expiresIso);
+  if (!Number.isFinite(expiresMs)) return false;
+  return nowMs > expiresMs && nowMs - expiresMs <= graceMs;
+}
+
+function byExpiryThenPriority(nowMs: number) {
+  return (a: WeatherAlert, b: WeatherAlert): number => {
+    const aExpired = isExpiredInGrace(a.properties.expires, nowMs) ? 1 : 0;
+    const bExpired = isExpiredInGrace(b.properties.expires, nowMs) ? 1 : 0;
+    if (aExpired !== bExpired) return aExpired - bExpired;
+    return byPriority(a, b);
+  };
+}
+
 /**
  * Split one ingest snapshot into:
  *   - `mapFeatures` — FeatureCollection suitable for MapLibre's alerts source.
@@ -652,6 +683,7 @@ export function buildAlertViews(
      * extra wiring). Callers can override to narrow further.
      */
     allowedStates?: readonly string[];
+    nowMs?: number;
   } = {},
 ): {
   mapFeatures: AlertsResponse;
@@ -665,7 +697,7 @@ export function buildAlertViews(
    */
   motionAlerts: IngestAlert[];
 } {
-  const { countyLookup, userState, userPoint, allowedStates } = options;
+  const { countyLookup, userState, userPoint, allowedStates, nowMs = Date.now() } = options;
   // Choose state filter for area_desc parsing. If the caller didn't pass one,
   // fall back to whatever the snapshot says it covers — for multi-state v2
   // snapshots this naturally lets cross-border watches hydrate against any
@@ -676,13 +708,21 @@ export function buildAlertViews(
   // Filter precedence: userPoint (precise, ZIP-derived) wins over userState
   // (coarse, picker-derived). Both are optional — when neither is set,
   // every alert in the snapshot is included.
-  const filteredIngest = userPoint
-    ? snapshot.alerts.filter((a) => alertTouchesPoint(a, userPoint))
-    : userState
-      ? snapshot.alerts.filter((a) => alertTouchesState(a, userState))
-      : snapshot.alerts;
+  const filteredIngest = (
+    userPoint
+      ? snapshot.alerts.filter((a) => alertTouchesPoint(a, userPoint))
+      : userState
+        ? snapshot.alerts.filter((a) => alertTouchesState(a, userState))
+        : snapshot.alerts
+  ).filter((a) => !isPastGracePeriod(a.expires_at, nowMs));
 
-  const allAlerts = filteredIngest.map(ingestToWeatherAlert).sort(byPriority);
+  const allAlerts = filteredIngest
+    .map((a) => {
+      const alert = ingestToWeatherAlert(a);
+      alert.properties.expired = isExpiredInGrace(a.expires_at, nowMs);
+      return alert;
+    })
+    .sort(byExpiryThenPriority(nowMs));
   const mapAlerts: WeatherAlert[] = [];
   for (const alert of allAlerts) {
     if (alert.geometry !== null) {

@@ -23,7 +23,7 @@ import { buildEventColorExpression, buildTornadoColorExpression } from '@/lib/al
 import { useColorVisionMode } from '@/lib/preferences';
 import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import { boostBasemapContrast } from '@/lib/mapContrast';
-import { alertLayerFilter } from '@/lib/alertFilter';
+import { alertLayerFilter, dimIfExpired } from '@/lib/alertFilter';
 import { getUserLocation, USER_LOCATION_KEY } from '@/lib/userLocation';
 import { applyGeoDefaultIfNeeded } from '@/lib/geoDefault';
 import { STATE_VIEW_ZOOM } from '@/lib/coverage';
@@ -583,6 +583,7 @@ export default function WeatherMap() {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
           userPoint: userPointRef.current ?? undefined,
+          nowMs: serverNow(),
         });
         lastMapFeaturesRef.current = mapFeatures;
         lastMotionAlertsRef.current = motionAlerts;
@@ -609,7 +610,7 @@ export default function WeatherMap() {
         publishLiveFetchFailure();
       }
     },
-    [renderFeatures, renderMotion, recordServerTime],
+    [renderFeatures, renderMotion, recordServerTime, serverNow],
   );
 
   // Fetch one historical snapshot by timestamp key. Same abort/retry discipline
@@ -628,10 +629,21 @@ export default function WeatherMap() {
         // deliberately skip `recordServerTime` here and pass `isLive:false`
         // to `publishSnapshot` so the store no-ops.
         publishSnapshot(snapshot.generated_at_ms ?? null, { isLive: false });
+        // Judge expiry against the snapshot's OWN time, never live serverNow()
+        // — a history snapshot's alerts are routinely >15min old by the time a
+        // user scrubs to them, so live "now" would drop nearly every
+        // historical alert. Mirrors the historical-fetch isolation already
+        // documented in snapshotStore.ts (isLive: false skips clock/staleness
+        // publishing) applied to expiry instead of clock offset.
+        const historicalNowMs =
+          snapshot.generated_at_ms && Number.isFinite(snapshot.generated_at_ms)
+            ? snapshot.generated_at_ms
+            : Date.parse(snapshot.generated_at);
         const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
           userPoint: userPointRef.current ?? undefined,
+          nowMs: historicalNowMs,
         });
         lastMapFeaturesRef.current = mapFeatures;
         lastMotionAlertsRef.current = motionAlerts;
@@ -1219,21 +1231,21 @@ export default function WeatherMap() {
         type: 'fill',
         source: 'alerts',
         filter: warningFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.15 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': dimIfExpired(0.15, 0.35) },
       });
       m.addLayer({
         id: 'alert-fills-watch',
         type: 'fill',
         source: 'alerts',
         filter: watchFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.09 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': dimIfExpired(0.09, 0.35) },
       });
       m.addLayer({
         id: 'alert-fills-advisory',
         type: 'fill',
         source: 'alerts',
         filter: advisoryFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.04 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': dimIfExpired(0.04, 0.35) },
       });
 
       // County lines — drawn first (below state lines) so state borders win
@@ -1400,7 +1412,7 @@ export default function WeatherMap() {
         paint: {
           'line-color': eventColor,
           'line-width': alertWarningWidth,
-          'line-opacity': alertWarningOpacity,
+          'line-opacity': dimIfExpired(alertWarningOpacity, 0.35),
         },
       });
       m.addLayer({
@@ -1411,7 +1423,7 @@ export default function WeatherMap() {
         paint: {
           'line-color': eventColor,
           'line-width': alertWatchWidth,
-          'line-opacity': alertWatchOpacity,
+          'line-opacity': dimIfExpired(alertWatchOpacity, 0.35),
           'line-dasharray': [2, 2],
         },
       });
@@ -1423,7 +1435,7 @@ export default function WeatherMap() {
         paint: {
           'line-color': eventColor,
           'line-width': alertAdvisoryWidth,
-          'line-opacity': alertAdvisoryOpacity,
+          'line-opacity': dimIfExpired(alertAdvisoryOpacity, 0.35),
         },
       });
 

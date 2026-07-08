@@ -159,6 +159,19 @@ describe('<AlertsPanel />', () => {
     expect(screen.getByText(/expires in 30m/i)).toBeInTheDocument();
   });
 
+  it('shows an EXPIRED badge on alerts marked expired', () => {
+    const expiredAlert = build({ nws_id: 'EXP', event_type: 'Tornado Warning' });
+    expiredAlert.properties = { ...expiredAlert.properties, expired: true };
+    render(<AlertsPanel alerts={[expiredAlert]} onSelect={() => {}} now={FIXED_NOW} />);
+    expect(screen.getByTestId('alert-card-expired-badge-Tornado Warning')).toBeInTheDocument();
+  });
+
+  it('does not show an EXPIRED badge on active alerts', () => {
+    const alert = build({ nws_id: 'ACTIVE', event_type: 'Tornado Warning' });
+    render(<AlertsPanel alerts={[alert]} onSelect={() => {}} now={FIXED_NOW} />);
+    expect(screen.queryByTestId('alert-card-expired-badge-Tornado Warning')).toBeNull();
+  });
+
   it('collapses and re-expands the whole panel via the header toggle', () => {
     const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
     render(<AlertsPanel alerts={[tornado]} onSelect={() => {}} now={FIXED_NOW} />);

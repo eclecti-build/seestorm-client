@@ -60,3 +60,32 @@ export function alertLayerFilter(
   if (hiddenEvents.size === 0) return base;
   return ['all', base, ['!', ['in', ['get', 'event'], ['literal', [...hiddenEvents]]]]];
 }
+
+/**
+ * Wrap a paint-property expression so it is dimmed by `factor` for features
+ * whose `expired` property is `true` (alerts past `expires` but still
+ * within the grace window — ALERT_EXPIRY_GRACE_MS in constants.ts). Works
+ * for both a literal opacity number and a zoom-interpolated expression.
+ * MapLibre requires zoom `step`/`interpolate` curves to remain the outermost
+ * paint expression, so zoom-interpolated bases push the dim factor into each
+ * stop output instead of wrapping the whole curve.
+ */
+export function dimIfExpired(
+  base: number | ExpressionSpecification,
+  factor: number,
+): ExpressionSpecification {
+  const dimFactor = ['case', ['==', ['get', 'expired'], true], factor, 1];
+  if (Array.isArray(base) && base[0] === 'interpolate') {
+    // MapLibre requires zoom curves to be the outermost expression in a
+    // paint value ('Only one zoom-based step/interpolate subexpression may
+    // be used'), so the dim factor is pushed into each output stop instead
+    // of wrapping the whole curve.
+    const [op, interpolation, input, ...stops] = base as unknown[];
+    const rebuilt: unknown[] = [op, interpolation, input];
+    for (let i = 0; i < stops.length; i += 2) {
+      rebuilt.push(stops[i], ['*', stops[i + 1], dimFactor]);
+    }
+    return rebuilt as unknown as ExpressionSpecification;
+  }
+  return ['*', base, dimFactor] as unknown as ExpressionSpecification;
+}

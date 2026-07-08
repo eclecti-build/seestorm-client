@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { useMemo } from 'react';
 import { renderHook } from '@testing-library/react';
-import { baseTierFilter, alertLayerFilter } from './alertFilter';
+import { baseTierFilter, alertLayerFilter, dimIfExpired } from './alertFilter';
 import type { AlertTier } from './alerts';
+import type { ExpressionSpecification } from 'maplibre-gl';
 
 // These tests lock in the exact expression shape because WeatherMap.tsx passes
 // the result directly to `map.setFilter(...)`. A regression here silently
@@ -145,5 +146,36 @@ describe('alertLayerFilter — useMemo referential stability', () => {
     const first = result.current;
     rerender({ h: hidden, unrelated: 1 });
     expect(result.current).toBe(first);
+  });
+});
+
+describe('dimIfExpired', () => {
+  it('wraps a literal opacity number in a case expression keyed on the expired property', () => {
+    expect(dimIfExpired(0.15, 0.35)).toEqual([
+      '*',
+      0.15,
+      ['case', ['==', ['get', 'expired'], true], 0.35, 1],
+    ]);
+  });
+
+  it('composes with a zoom-interpolated expression as the base', () => {
+    const interpolated = [
+      'interpolate',
+      ['linear'],
+      ['zoom'],
+      5,
+      0.45,
+      8,
+      0.9,
+    ] as unknown as ExpressionSpecification;
+    expect(dimIfExpired(interpolated, 0.35)).toEqual([
+      'interpolate',
+      ['linear'],
+      ['zoom'],
+      5,
+      ['*', 0.45, ['case', ['==', ['get', 'expired'], true], 0.35, 1]],
+      8,
+      ['*', 0.9, ['case', ['==', ['get', 'expired'], true], 0.35, 1]],
+    ]);
   });
 });

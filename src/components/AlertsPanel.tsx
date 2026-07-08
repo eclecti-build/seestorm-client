@@ -93,7 +93,7 @@ function AlertCard({
         selected
           ? 'bg-gray-700 border-white/40'
           : 'bg-gray-800/80 border-gray-700 hover:bg-gray-800'
-      }`}
+      } ${alert.properties.expired ? 'opacity-60' : ''}`}
     >
       <div className="flex items-center gap-2 mb-1">
         <span
@@ -117,6 +117,14 @@ function AlertCard({
         >
           {alert.properties.tornadoLabel ?? alert.properties.event}
         </span>
+        {alert.properties.expired && (
+          <span
+            className="text-[9px] font-bold uppercase tracking-wide text-amber-400 border border-amber-400/60 rounded px-1"
+            data-testid={`alert-card-expired-badge-${alert.properties.event}`}
+          >
+            Expired
+          </span>
+        )}
         <span className="ml-auto text-[10px] text-gray-400">{tier}</span>
       </div>
       <div className="text-xs text-gray-100 line-clamp-2">{areaDesc}</div>
