@@ -43,11 +43,21 @@ export interface SnapshotState {
    * avoids an extra round-trip or Date-header dependency.
    */
   clockOffset: number;
+  /**
+   * Consecutive LIVE fetch failures (fetchLive's catch path, after
+   * fetchWithRetry's internal retries are already exhausted) since the last
+   * successful live fetch. Reset to 0 by every successful `publishSnapshot`
+   * call with `isLive: true` — including one whose payload is missing
+   * `generated_at_ms`, because a successful HTTP round-trip is not a fetch
+   * failure. Historical fetches never touch this field.
+   */
+  consecutiveLiveFailures: number;
 }
 
 const INITIAL_STATE: SnapshotState = {
   generatedAtMs: null,
   clockOffset: 0,
+  consecutiveLiveFailures: 0,
 };
 
 let currentState: SnapshotState = INITIAL_STATE;
@@ -94,20 +104,59 @@ export function publishSnapshot(
 
   const now = Date.now();
   const hasTime = generatedAtMs !== null && Number.isFinite(generatedAtMs) && generatedAtMs > 0;
+
+  // Reset unconditionally on every successful LIVE publish — a successful
+  // HTTP round-trip is not a fetch failure, even one whose payload is
+  // missing generated_at_ms (the !hasTime branch below). This is computed
+  // BEFORE the dedup comparison and folded into `next` up front so it can
+  // never be silently dropped by the early `return` below: if the reset
+  // were instead applied only after a dedup check keyed on
+  // generatedAtMs/clockOffset, a republish of an UNCHANGED generatedAtMs/
+  // clockOffset (see snapshotStore.test.ts's "unchanged from the current
+  // state" test) would hit that early return and leave
+  // consecutiveLiveFailures stuck at its pre-success value forever.
+  const consecutiveLiveFailures = 0;
+  const failuresChanged = consecutiveLiveFailures !== currentState.consecutiveLiveFailures;
+
   const next: SnapshotState = hasTime
-    ? { generatedAtMs, clockOffset: (generatedAtMs as number) - now }
+    ? { generatedAtMs, clockOffset: (generatedAtMs as number) - now, consecutiveLiveFailures }
     : // Live fetch with missing/invalid generated_at_ms: clear both fields so
       // the banner degrades to "cannot tell" rather than comparing wall-clock
       // time against a stale timestamp preserved from a previous publish.
-      { generatedAtMs: null, clockOffset: 0 };
-  // Avoid spurious notifications when nothing actually changed.
+      { generatedAtMs: null, clockOffset: 0, consecutiveLiveFailures };
+  // Avoid spurious notifications when NOTHING actually changed — but a
+  // changed failure counter counts as a change requiring emit; otherwise a
+  // publish that resets consecutiveLiveFailures from a nonzero value back
+  // to 0 while generatedAtMs/clockOffset happen to be unchanged would
+  // never notify AlertsPanel's degraded-notice subscriber that the reset
+  // happened.
   if (
     next.generatedAtMs === currentState.generatedAtMs &&
-    next.clockOffset === currentState.clockOffset
+    next.clockOffset === currentState.clockOffset &&
+    !failuresChanged
   ) {
     return;
   }
   currentState = next;
+  emit();
+}
+
+/**
+ * Record a failed LIVE fetch attempt. Lets `AlertsPanel` distinguish "no
+ * active alerts" (data arrived, list is empty) from "alert data unavailable"
+ * (the fetch itself is failing) — including a session that has NEVER had a
+ * successful fetch, where `allAlerts` is still its initial `[]`. Deliberately
+ * separate from `publishSnapshot`: a failed fetch has no `generatedAtMs` to
+ * publish, and must not touch the staleness banner's binary FRESH/BROKEN
+ * state (StalenessBanner.tsx header comment) — the banner's "cannot tell"
+ * (`generatedAtMs: null`) state and this counter are independent signals a
+ * caller may combine, not one merged three-way state.
+ */
+export function publishLiveFetchFailure(): void {
+  currentState = {
+    ...currentState,
+    consecutiveLiveFailures: currentState.consecutiveLiveFailures + 1,
+  };
   emit();
 }
 

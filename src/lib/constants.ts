@@ -13,5 +13,19 @@ export const FETCH_RETRY_MAX_ATTEMPTS = 3;
 
 export const STALENESS_CRITICAL_MS = 90_000;
 
+/**
+ * Consecutive failed LIVE fetch attempts (fetchLive's catch path in
+ * WeatherMap.tsx, after fetchWithRetry's internal retries are already
+ * exhausted) before AlertsPanel shows the "Alert data unavailable" degraded
+ * notice instead of "No active alerts." 2 cycles at POLL_INTERVAL_MS = 30s is
+ * up to 60s of persistent failure — long enough that a single blip doesn't
+ * flash the notice (fetchWithRetry already absorbs single blips internally
+ * via its own 250/1000/2000ms backoff), short enough that a real outage is
+ * surfaced well before a user gives up, and — unlike the staleness banner,
+ * which requires a PRIOR success to have a `generatedAtMs` to compare
+ * against — it can fire on a session that has never had one.
+ */
+export const FETCH_DEGRADED_THRESHOLD = 2;
+
 export const STALENESS_BANNER_COPY =
   'Live data is delayed. For active severe weather, check NWS.gov or NOAA Weather Radio.';

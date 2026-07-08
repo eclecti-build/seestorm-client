@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { __resetSnapshotStoreForTests, publishSnapshot, useSnapshotState } from './snapshotStore';
+import {
+  __resetSnapshotStoreForTests,
+  publishLiveFetchFailure,
+  publishSnapshot,
+  useSnapshotState,
+} from './snapshotStore';
 
 describe('snapshotStore', () => {
   beforeEach(() => {
@@ -13,9 +18,13 @@ describe('snapshotStore', () => {
     vi.useRealTimers();
   });
 
-  it('initial state is { generatedAtMs: null, clockOffset: 0 }', () => {
+  it('initial state is { generatedAtMs: null, clockOffset: 0, consecutiveLiveFailures: 0 }', () => {
     const { result } = renderHook(() => useSnapshotState());
-    expect(result.current).toEqual({ generatedAtMs: null, clockOffset: 0 });
+    expect(result.current).toEqual({
+      generatedAtMs: null,
+      clockOffset: 0,
+      consecutiveLiveFailures: 0,
+    });
   });
 
   it('publishSnapshot(live) updates both generatedAtMs and clockOffset', () => {
@@ -99,5 +108,84 @@ describe('snapshotStore', () => {
     // Second publish must not cause a re-render because nothing changed.
     expect(listener.mock.calls.length).toBe(afterFirst);
     expect(result.current.generatedAtMs).toBe(ts);
+  });
+
+  it('initial state includes consecutiveLiveFailures: 0', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    expect(result.current.consecutiveLiveFailures).toBe(0);
+  });
+
+  it('publishLiveFetchFailure increments consecutiveLiveFailures without touching generatedAtMs/clockOffset', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    act(() => {
+      publishLiveFetchFailure();
+      publishLiveFetchFailure();
+    });
+    expect(result.current.consecutiveLiveFailures).toBe(2);
+    expect(result.current.generatedAtMs).toBeNull();
+    expect(result.current.clockOffset).toBe(0);
+  });
+
+  it('a successful live publishSnapshot resets consecutiveLiveFailures to 0', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    act(() => {
+      publishLiveFetchFailure();
+      publishLiveFetchFailure();
+    });
+    expect(result.current.consecutiveLiveFailures).toBe(2);
+    act(() => {
+      publishSnapshot(Date.now(), { isLive: true });
+    });
+    expect(result.current.consecutiveLiveFailures).toBe(0);
+  });
+
+  it('a live publishSnapshot with missing generatedAtMs still resets consecutiveLiveFailures (a successful HTTP round-trip is not a fetch failure)', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    act(() => {
+      publishLiveFetchFailure();
+    });
+    act(() => {
+      publishSnapshot(null, { isLive: true });
+    });
+    expect(result.current.consecutiveLiveFailures).toBe(0);
+  });
+
+  // REVIEW AMENDMENT (2026-07-08 Tier 1 plan, Task 1): publishSnapshot's
+  // "avoid spurious notifications when nothing changed" dedup guard
+  // originally compared only generatedAtMs/clockOffset. If a publish
+  // republishes the SAME generatedAtMs (and therefore the same
+  // clockOffset) as currentState — plausible any time two consecutive live
+  // fetches happen to carry an identical generated_at_ms, e.g. a
+  // slow-moving quiet period, or simply the very next successful fetch
+  // after a run of failures resolves to a value the store already holds —
+  // a version of this fix that folds the counter reset into `next` but
+  // dedups on generatedAtMs/clockOffset alone would hit the early `return`
+  // before `currentState = next` ever runs, silently discarding the reset
+  // and leaving consecutiveLiveFailures stuck at its pre-success value
+  // forever (AlertsPanel's degraded notice would then never clear). This
+  // test pins that the reset survives that exact case.
+  it('resets consecutiveLiveFailures on a successful publish even when generatedAtMs/clockOffset are unchanged from the current state', () => {
+    const { result } = renderHook(() => useSnapshotState());
+    const ts = Date.now() + 5_000;
+    act(() => {
+      publishSnapshot(ts, { isLive: true });
+    });
+    expect(result.current.generatedAtMs).toBe(ts);
+    expect(result.current.consecutiveLiveFailures).toBe(0);
+
+    act(() => {
+      publishLiveFetchFailure();
+      publishLiveFetchFailure();
+    });
+    expect(result.current.consecutiveLiveFailures).toBe(2);
+
+    // Same ts as the first publish above → same generatedAtMs AND (under
+    // vi.useFakeTimers with a frozen system time) the same clockOffset.
+    // The dedup guard must still let the failure-counter reset through.
+    act(() => {
+      publishSnapshot(ts, { isLive: true });
+    });
+    expect(result.current.generatedAtMs).toBe(ts);
+    expect(result.current.consecutiveLiveFailures).toBe(0);
   });
 });

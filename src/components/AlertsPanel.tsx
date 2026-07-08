@@ -12,6 +12,8 @@ import {
 import { tornadoColor } from '@/lib/tornado';
 import { useColorVisionMode } from '@/lib/preferences';
 import { AlertIcon } from '@/lib/alertIcons';
+import { useSnapshotState } from '@/lib/snapshotStore';
+import { FETCH_DEGRADED_THRESHOLD } from '@/lib/constants';
 
 // Family headers summarize a whole bucket of related events — we pick a
 // representative event so the family icon agrees with `iconForEvent` for
@@ -225,6 +227,8 @@ export default function AlertsPanel({
   // Pure — derived straight from the input alerts so the panel re-renders
   // cleanly whenever the upstream snapshot changes.
   const groups = useMemo(() => groupByFamily(alerts), [alerts]);
+  const { consecutiveLiveFailures } = useSnapshotState();
+  const fetchDegraded = consecutiveLiveFailures >= FETCH_DEGRADED_THRESHOLD;
 
   // Whole-panel collapse — during a multi-product outbreak the panel can
   // dominate the viewport even with per-family accordions, so the user can
@@ -260,7 +264,13 @@ export default function AlertsPanel({
         aria-label="Active alerts"
       >
         <div className="font-semibold mb-1">Active alerts</div>
-        <div className="text-xs text-gray-400">No active alerts.</div>
+        <div
+          className={`text-xs ${fetchDegraded ? 'text-amber-400' : 'text-gray-400'}`}
+          role={fetchDegraded ? 'status' : undefined}
+          aria-live={fetchDegraded ? 'polite' : undefined}
+        >
+          {fetchDegraded ? 'Alert data unavailable — retrying…' : 'No active alerts.'}
+        </div>
       </div>
     );
   }

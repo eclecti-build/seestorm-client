@@ -30,7 +30,7 @@ import { STATE_VIEW_ZOOM } from '@/lib/coverage';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { fetchJsonWithRetry, isAbortError } from '@/lib/fetchWithRetry';
 import { useClockOffset } from '@/lib/useClockOffset';
-import { publishSnapshot } from '@/lib/snapshotStore';
+import { publishLiveFetchFailure, publishSnapshot } from '@/lib/snapshotStore';
 import AlertsPanel from './AlertsPanel';
 import LocationChip from './LocationChip';
 import MapLegend from './MapLegend';
@@ -594,6 +594,7 @@ export default function WeatherMap() {
         // away would be misleading. Real failures (retry exhausted) still log.
         if (isAbortError(err)) return;
         console.error('Failed to fetch live snapshot:', err);
+        publishLiveFetchFailure();
       }
     },
     [renderFeatures, renderMotion, recordServerTime],
