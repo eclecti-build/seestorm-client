@@ -757,6 +757,82 @@ describe('security headers — baseline + CSP Report-Only', () => {
   });
 });
 
+describe('R2 failure handling — JSON 503/500 instead of the Cloudflare 1101 page', () => {
+  it('returns a JSON 503 with Retry-After when env.SNAPSHOTS.get throws', async () => {
+    const env: Env = {
+      SNAPSHOTS: {
+        async get() {
+          throw new Error('R2 unavailable');
+        },
+      } as unknown as R2Bucket,
+      ASSETS: {
+        fetch: () => {
+          throw new Error('ASSETS.fetch should not be called for /v1/* tests');
+        },
+      } as unknown as Fetcher,
+    };
+    const res = await worker.fetch(
+      new Request('https://seestorm.example/v1/active-events.json'),
+      env,
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('retry-after')).toBe('5');
+    expect(res.headers.get('content-type')).toContain('application/json');
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBeTruthy();
+    // Security headers must still land on the error path.
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+    expect(res.headers.get('content-security-policy-report-only')).toBeTruthy();
+  });
+
+  it('returns a JSON 503 when the history list bucket.list() throws', async () => {
+    const brokenBucket: R2BucketListOnly = {
+      async list() {
+        throw new Error('R2 list unavailable');
+      },
+    };
+    const env: Env = {
+      SNAPSHOTS: brokenBucket as unknown as R2Bucket,
+      ASSETS: {
+        fetch: () => {
+          throw new Error('ASSETS.fetch should not be called for /v1/* tests');
+        },
+      } as unknown as Fetcher,
+    };
+    const res = await worker.fetch(new Request('https://seestorm.example/v1/history'), env);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('5');
+    expect(res.headers.get('content-type')).toContain('application/json');
+  });
+
+  it('returns a JSON 500 (not 503, not the 1101 page) on the truncated-without-cursor contract violation', async () => {
+    const brokenBucket: R2BucketListOnly = {
+      async list() {
+        return {
+          objects: [{ key: 'history/20260417T000000Z.json' } as R2Object],
+          truncated: true,
+          delimitedPrefixes: [],
+        } as unknown as R2Objects;
+      },
+    };
+    const env: Env = {
+      SNAPSHOTS: brokenBucket as unknown as R2Bucket,
+      ASSETS: {
+        fetch: () => {
+          throw new Error('ASSETS.fetch should not be called for /v1/* tests');
+        },
+      } as unknown as Fetcher,
+    };
+    const res = await worker.fetch(new Request('https://seestorm.example/v1/history'), env);
+    expect(res.status).toBe(500);
+    expect(res.headers.get('retry-after')).toBeNull();
+    expect(res.headers.get('content-type')).toContain('application/json');
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBeTruthy();
+  });
+});
+
 describe('handleCspReport', () => {
   afterEach(() => {
     vi.restoreAllMocks();
