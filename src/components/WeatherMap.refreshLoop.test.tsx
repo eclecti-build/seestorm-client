@@ -209,3 +209,61 @@ describe('WeatherMap refresh-loop pattern', () => {
     expect(fetchMock.mock.calls.length).toBe(callCountAfterMount);
   });
 });
+
+// REVIEW AMENDMENT (2026-07-08 Tier 1 plan, Task 2): pins the ungate-from-
+// mapReady pattern this task introduces. `buggyMapReadyGate: true`
+// reproduces the PRE-fix gate (`if (!mapReady || !isLive) return;`,
+// WeatherMap.tsx:691 before this task); `false` is the corrected gate
+// (`if (!isLive) return;` — mapReady deliberately not read). Same
+// fixture-mirrors-production-shape approach as PollFixture above, with
+// the buggy/fixed toggle from WeatherMap.pollEffectChurn.test.tsx's
+// `buggyFetchHistory` prop, so this one file proves both.
+interface GatedPollFixtureProps {
+  mapReady: boolean;
+  isLive: boolean;
+  onFetch: () => void;
+  buggyMapReadyGate: boolean;
+}
+
+function GatedPollFixture({ mapReady, isLive, onFetch, buggyMapReadyGate }: GatedPollFixtureProps) {
+  useEffect(() => {
+    if (buggyMapReadyGate ? !mapReady || !isLive : !isLive) return;
+    onFetch();
+  }, [mapReady, isLive, onFetch, buggyMapReadyGate]);
+
+  return null;
+}
+
+describe('WeatherMap live-poll gate — decoupled from mapReady (Task 2)', () => {
+  it('[pre-fix pattern] does NOT fire when mapReady is false — the bug this task fixes', () => {
+    const onFetch = vi.fn();
+    render(<GatedPollFixture mapReady={false} isLive={true} onFetch={onFetch} buggyMapReadyGate />);
+    expect(onFetch).not.toHaveBeenCalled();
+  });
+
+  it('[fixed pattern] fires the poll fetch when mapReady is false, as long as isLive is true', () => {
+    const onFetch = vi.fn();
+    render(
+      <GatedPollFixture
+        mapReady={false}
+        isLive={true}
+        onFetch={onFetch}
+        buggyMapReadyGate={false}
+      />,
+    );
+    expect(onFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('[fixed pattern] does NOT fire when isLive is false, regardless of mapReady', () => {
+    const onFetch = vi.fn();
+    render(
+      <GatedPollFixture
+        mapReady={true}
+        isLive={false}
+        onFetch={onFetch}
+        buggyMapReadyGate={false}
+      />,
+    );
+    expect(onFetch).not.toHaveBeenCalled();
+  });
+});

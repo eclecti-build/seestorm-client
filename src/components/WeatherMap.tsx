@@ -27,7 +27,7 @@ import { alertLayerFilter } from '@/lib/alertFilter';
 import { getUserLocation, USER_LOCATION_KEY } from '@/lib/userLocation';
 import { applyGeoDefaultIfNeeded } from '@/lib/geoDefault';
 import { STATE_VIEW_ZOOM } from '@/lib/coverage';
-import { POLL_INTERVAL_MS } from '@/lib/constants';
+import { MAP_LOAD_TIMEOUT_MS, POLL_INTERVAL_MS } from '@/lib/constants';
 import { fetchJsonWithRetry, isAbortError } from '@/lib/fetchWithRetry';
 import { useClockOffset } from '@/lib/useClockOffset';
 import { publishLiveFetchFailure, publishSnapshot } from '@/lib/snapshotStore';
@@ -215,6 +215,7 @@ export default function WeatherMap() {
   // opt-in (the "+1h forecast" toggle below) so "live" reads as the leading edge.
   const [showForecast, setShowForecast] = useState<boolean>(false);
   const [mapReady, setMapReady] = useState<boolean>(false);
+  const [mapLoadFailed, setMapLoadFailed] = useState<boolean>(false);
   const colorVisionMode = useColorVisionMode();
   // Init runs once; it reads the mode through a ref so a later mode change does
   // NOT re-run init (which would rebuild the whole map). Live updates are
@@ -348,6 +349,15 @@ export default function WeatherMap() {
     const fc = buildMotionFeatures(ingestAlerts);
     (map.current.getSource('alert-motion') as maplibregl.GeoJSONSource).setData(fc);
   }, []);
+
+  // Latest computed map payload, kept even if the map isn't ready to render
+  // it yet — renderFeatures/renderMotion already no-op safely when the
+  // MapLibre source doesn't exist (see above). The mapReady-catchup effect
+  // below replays these the instant the map's sources exist, so alert data
+  // that arrived before basemap load doesn't wait for the next
+  // POLL_INTERVAL_MS tick to reach the map.
+  const lastMapFeaturesRef = useRef<AlertsResponse | null>(null);
+  const lastMotionAlertsRef = useRef<IngestAlert[] | null>(null);
 
   // User's saved state (if any) — drives the userState filter so the side
   // panel and map don't drown the user in alerts from the other 7 Great
@@ -574,6 +584,8 @@ export default function WeatherMap() {
           userState: userStateRef.current ?? undefined,
           userPoint: userPointRef.current ?? undefined,
         });
+        lastMapFeaturesRef.current = mapFeatures;
+        lastMotionAlertsRef.current = motionAlerts;
         // Defer the heavy state apply off the click thread. `source.setData()`
         // with the full GeoJSON blob is what pinned production INP at 2,104 ms
         // on the LIVE pill (swarm audit 2026-04-18, Tier 1 #1). React 19's
@@ -621,6 +633,8 @@ export default function WeatherMap() {
           userState: userStateRef.current ?? undefined,
           userPoint: userPointRef.current ?? undefined,
         });
+        lastMapFeaturesRef.current = mapFeatures;
+        lastMotionAlertsRef.current = motionAlerts;
         // Same rationale as fetchLive — defer the heavy state apply so the
         // playback-bar click handler returns fast. See Tier 1 #1 in the swarm
         // audit (2026-04-18).
@@ -689,7 +703,13 @@ export default function WeatherMap() {
   // synchronously in this effect body — so react-hooks/set-state-in-effect
   // is a false positive here.
   useEffect(() => {
-    if (!mapReady || !isLive) return;
+    // Deliberately NOT gated on mapReady — alert data (AlertsPanel, the
+    // count badge) must not wait on basemap load. renderFeatures/
+    // renderMotion (called inside fetchLive/fetchHistory) already no-op
+    // until the map's sources exist; the catch-up effect above replays the
+    // latest payload the instant mapReady flips. See swarm audit 2026-04-18
+    // Tier 1 #2c and the Tier 1 client-safety remediation (2026-07-08).
+    if (!isLive) return;
     const controller = new AbortController();
     const { signal } = controller;
 
@@ -726,7 +746,7 @@ export default function WeatherMap() {
       window.removeEventListener('focus', onFocus);
       controller.abort();
     };
-  }, [mapReady, isLive, fetchLive, fetchHistory]);
+  }, [isLive, fetchLive, fetchHistory]);
 
   // When scrubbed to historical, fetch that snapshot. Same async-setState
   // pattern. AbortController cleanup cancels the previous historical fetch
@@ -1059,7 +1079,32 @@ export default function WeatherMap() {
     // without the always-on text strip the brand chips used to crowd.
     m.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
 
+    let mapLoaded = false;
+    const loadTimeoutId = setTimeout(() => {
+      if (!mapLoaded) {
+        console.error(`MapLibre style failed to load within ${MAP_LOAD_TIMEOUT_MS}ms`);
+        setMapLoadFailed(true);
+      }
+    }, MAP_LOAD_TIMEOUT_MS);
+
+    m.on('error', (e) => {
+      console.error('MapLibre error:', e.error);
+      // Only surface the degraded overlay for PRE-load failures. MapLibre's
+      // map-level 'error' event also fires for recoverable post-load
+      // conditions (transient tile/glyph/sprite fetch failures), which must
+      // not permanently blanket a working map — post-load errors stay
+      // console-only. (2026-07-08 orchestration amendment, opus review of
+      // Tier 1 Task 2: transient tile error would otherwise hide the live
+      // map until manual reload.)
+      if (!mapLoaded) {
+        setMapLoadFailed(true);
+      }
+    });
+
     m.on('load', () => {
+      mapLoaded = true;
+      clearTimeout(loadTimeoutId);
+      setMapLoadFailed(false);
       // Lift roads and place labels out from under the radar + alert overlays.
       // Runs once, before any of our own layers are added, so we only walk the
       // basemap's own layers and don't compound-boost on re-render.
@@ -1679,9 +1724,23 @@ export default function WeatherMap() {
     map.current = m;
 
     return () => {
+      clearTimeout(loadTimeoutId);
       m.remove();
     };
   }, [loadCountiesForState]);
+
+  // Catch the map up the instant its style finishes loading. The poll effect
+  // below is intentionally NOT gated on `mapReady` (alert fetching must not
+  // wait on basemap load), so if a fetch resolves before the map's `load`
+  // event fires, renderFeatures/renderMotion no-op (their sources don't exist
+  // yet) and that data would otherwise sit unpainted until the next
+  // POLL_INTERVAL_MS tick. Replay the latest computed payload as soon as
+  // `mapReady` flips so there's no up-to-30s gap on a slow basemap load.
+  useEffect(() => {
+    if (!mapReady) return;
+    if (lastMapFeaturesRef.current) renderFeatures(lastMapFeaturesRef.current);
+    if (lastMotionAlertsRef.current) renderMotion(lastMotionAlertsRef.current);
+  }, [mapReady, renderFeatures, renderMotion]);
 
   // True only when at least one rendered alert is a confirmed tornado.
   // Gates the pulse loop off the common (clear-weather) path entirely.
@@ -1811,6 +1870,28 @@ export default function WeatherMap() {
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
+      {mapLoadFailed && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="absolute inset-0 flex items-center justify-center bg-gray-950/95 text-white text-center p-6"
+        >
+          <div className="max-w-sm space-y-3">
+            <div className="text-lg font-semibold">Basemap unavailable</div>
+            <div className="text-sm text-gray-300">
+              The map tiles failed to load, but the alert list is still live — check the panel for
+              active weather alerts, or reload to try the map again.
+            </div>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-sm font-semibold"
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Alert count badge — counts ALL active alerts, including zone-aggregate
           products (Watches) that don't render on the map. Previously this

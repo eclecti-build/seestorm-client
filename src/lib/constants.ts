@@ -27,5 +27,16 @@ export const STALENESS_CRITICAL_MS = 90_000;
  */
 export const FETCH_DEGRADED_THRESHOLD = 2;
 
+/**
+ * How long the map-init effect (WeatherMap.tsx) waits for MapLibre's `load`
+ * event before treating the basemap as failed and showing the "basemap
+ * unavailable" degraded overlay. The CartoDB dark-matter style.json + initial
+ * tile fetch normally completes in well under a couple of seconds; 15s gives
+ * generous margin for a slow mobile connection before telling the user
+ * something's wrong, while staying far short of the point a user gives up
+ * waiting on a public-safety app.
+ */
+export const MAP_LOAD_TIMEOUT_MS = 15_000;
+
 export const STALENESS_BANNER_COPY =
   'Live data is delayed. For active severe weather, check NWS.gov or NOAA Weather Radio.';
