@@ -64,6 +64,14 @@ export interface FetchWithRetryOptions {
    * picks up normally.
    */
   timeoutMs?: number;
+  /**
+   * Optional hook invoked with the raw `Response` immediately after a
+   * successful (`ok`) attempt, before the body is consumed via `.json()`.
+   * Lets callers extract response headers (e.g. `Date`, `Age`) without
+   * changing this function's `Promise<unknown>` return shape or touching
+   * the other call sites that don't need header access.
+   */
+  onResponse?: (response: Response) => void;
 }
 
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -150,6 +158,13 @@ export async function fetchJsonWithRetry(
         lastStatus = resp.status;
         lastErr = new Error(`HTTP ${resp.status}`);
       } else {
+        try {
+          options.onResponse?.(resp);
+        } catch (hookErr) {
+          // A header-inspection hook is a side channel — it must never fail
+          // the fetch itself (alert data is the safety-critical payload).
+          console.warn('fetchJsonWithRetry: onResponse hook threw; ignoring', hookErr);
+        }
         return (await resp.json()) as unknown;
       }
     } catch (err) {

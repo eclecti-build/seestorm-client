@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import AlertsPanel from './AlertsPanel';
 import { ingestToWeatherAlert, type IngestAlert, type WeatherAlert } from '@/lib/alerts';
+import { __resetSnapshotStoreForTests, publishLiveFetchFailure } from '@/lib/snapshotStore';
+import { FETCH_DEGRADED_THRESHOLD } from '@/lib/constants';
 
 const STUB_GEOMETRY: GeoJSON.Geometry = {
   type: 'Polygon',
@@ -157,6 +159,19 @@ describe('<AlertsPanel />', () => {
     expect(screen.getByText(/expires in 30m/i)).toBeInTheDocument();
   });
 
+  it('shows an EXPIRED badge on alerts marked expired', () => {
+    const expiredAlert = build({ nws_id: 'EXP', event_type: 'Tornado Warning' });
+    expiredAlert.properties = { ...expiredAlert.properties, expired: true };
+    render(<AlertsPanel alerts={[expiredAlert]} onSelect={() => {}} now={FIXED_NOW} />);
+    expect(screen.getByTestId('alert-card-expired-badge-Tornado Warning')).toBeInTheDocument();
+  });
+
+  it('does not show an EXPIRED badge on active alerts', () => {
+    const alert = build({ nws_id: 'ACTIVE', event_type: 'Tornado Warning' });
+    render(<AlertsPanel alerts={[alert]} onSelect={() => {}} now={FIXED_NOW} />);
+    expect(screen.queryByTestId('alert-card-expired-badge-Tornado Warning')).toBeNull();
+  });
+
   it('collapses and re-expands the whole panel via the header toggle', () => {
     const tornado = build({ nws_id: 'TO.1', event_type: 'Tornado Warning' });
     render(<AlertsPanel alerts={[tornado]} onSelect={() => {}} now={FIXED_NOW} />);
@@ -305,5 +320,29 @@ describe('<AlertsPanel />', () => {
 
       expect(screen.getByText('Elkhart, IN; Branch, MI; St. Joseph, MI')).toBeInTheDocument();
     });
+  });
+});
+
+describe('<AlertsPanel /> — fetch-health degraded notice', () => {
+  beforeEach(() => {
+    __resetSnapshotStoreForTests();
+  });
+
+  it('shows "No active alerts." for a confirmed-empty list (no fetch failures)', () => {
+    render(<AlertsPanel alerts={[]} onSelect={() => {}} now={FIXED_NOW} />);
+    expect(screen.getByText('No active alerts.')).toBeInTheDocument();
+  });
+
+  it('does not show the degraded notice below FETCH_DEGRADED_THRESHOLD', () => {
+    for (let i = 0; i < FETCH_DEGRADED_THRESHOLD - 1; i++) publishLiveFetchFailure();
+    render(<AlertsPanel alerts={[]} onSelect={() => {}} now={FIXED_NOW} />);
+    expect(screen.getByText('No active alerts.')).toBeInTheDocument();
+  });
+
+  it('shows "Alert data unavailable" once consecutive failures reach FETCH_DEGRADED_THRESHOLD, including a never-yet-succeeded session', () => {
+    for (let i = 0; i < FETCH_DEGRADED_THRESHOLD; i++) publishLiveFetchFailure();
+    render(<AlertsPanel alerts={[]} onSelect={() => {}} now={FIXED_NOW} />);
+    expect(screen.getByText(/alert data unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText('No active alerts.')).toBeNull();
   });
 });

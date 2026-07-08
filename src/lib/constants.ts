@@ -13,5 +13,41 @@ export const FETCH_RETRY_MAX_ATTEMPTS = 3;
 
 export const STALENESS_CRITICAL_MS = 90_000;
 
+/**
+ * Consecutive failed LIVE fetch attempts (fetchLive's catch path in
+ * WeatherMap.tsx, after fetchWithRetry's internal retries are already
+ * exhausted) before AlertsPanel shows the "Alert data unavailable" degraded
+ * notice instead of "No active alerts." 2 cycles at POLL_INTERVAL_MS = 30s is
+ * up to 60s of persistent failure — long enough that a single blip doesn't
+ * flash the notice (fetchWithRetry already absorbs single blips internally
+ * via its own 250/1000/2000ms backoff), short enough that a real outage is
+ * surfaced well before a user gives up, and — unlike the staleness banner,
+ * which requires a PRIOR success to have a `generatedAtMs` to compare
+ * against — it can fire on a session that has never had one.
+ */
+export const FETCH_DEGRADED_THRESHOLD = 2;
+
+/**
+ * How long the map-init effect (WeatherMap.tsx) waits for MapLibre's `load`
+ * event before treating the basemap as failed and showing the "basemap
+ * unavailable" degraded overlay. The CartoDB dark-matter style.json + initial
+ * tile fetch normally completes in well under a couple of seconds; 15s gives
+ * generous margin for a slow mobile connection before telling the user
+ * something's wrong, while staying far short of the point a user gives up
+ * waiting on a public-safety app.
+ */
+export const MAP_LOAD_TIMEOUT_MS = 15_000;
+
 export const STALENESS_BANNER_COPY =
   'Live data is delayed. For active severe weather, check NWS.gov or NOAA Weather Radio.';
+
+/**
+ * Grace period after an alert's `expires` timestamp during which it is
+ * still shown (de-emphasized, EXPIRED-badged, demoted in sort order)
+ * rather than fully removed. See Task 3 design notes (2026-07-08 Tier 1
+ * plan) for the 15-minute justification. Matches the fail-open posture in
+ * alerts.ts (alertTouchesPoint/alertTouchesState) — we DEMOTE at
+ * `expires`, we do not DROP until this grace period has fully elapsed,
+ * and never drop on an unparseable `expires` at all.
+ */
+export const ALERT_EXPIRY_GRACE_MS = 15 * 60_000;

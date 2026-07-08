@@ -12,6 +12,8 @@ import {
 import { tornadoColor } from '@/lib/tornado';
 import { useColorVisionMode } from '@/lib/preferences';
 import { AlertIcon } from '@/lib/alertIcons';
+import { useSnapshotState } from '@/lib/snapshotStore';
+import { FETCH_DEGRADED_THRESHOLD } from '@/lib/constants';
 
 // Family headers summarize a whole bucket of related events — we pick a
 // representative event so the family icon agrees with `iconForEvent` for
@@ -91,7 +93,7 @@ function AlertCard({
         selected
           ? 'bg-gray-700 border-white/40'
           : 'bg-gray-800/80 border-gray-700 hover:bg-gray-800'
-      }`}
+      } ${alert.properties.expired ? 'opacity-60' : ''}`}
     >
       <div className="flex items-center gap-2 mb-1">
         <span
@@ -115,6 +117,14 @@ function AlertCard({
         >
           {alert.properties.tornadoLabel ?? alert.properties.event}
         </span>
+        {alert.properties.expired && (
+          <span
+            className="text-[9px] font-bold uppercase tracking-wide text-amber-400 border border-amber-400/60 rounded px-1"
+            data-testid={`alert-card-expired-badge-${alert.properties.event}`}
+          >
+            Expired
+          </span>
+        )}
         <span className="ml-auto text-[10px] text-gray-400">{tier}</span>
       </div>
       <div className="text-xs text-gray-100 line-clamp-2">{areaDesc}</div>
@@ -225,6 +235,8 @@ export default function AlertsPanel({
   // Pure — derived straight from the input alerts so the panel re-renders
   // cleanly whenever the upstream snapshot changes.
   const groups = useMemo(() => groupByFamily(alerts), [alerts]);
+  const { consecutiveLiveFailures } = useSnapshotState();
+  const fetchDegraded = consecutiveLiveFailures >= FETCH_DEGRADED_THRESHOLD;
 
   // Whole-panel collapse — during a multi-product outbreak the panel can
   // dominate the viewport even with per-family accordions, so the user can
@@ -260,7 +272,13 @@ export default function AlertsPanel({
         aria-label="Active alerts"
       >
         <div className="font-semibold mb-1">Active alerts</div>
-        <div className="text-xs text-gray-400">No active alerts.</div>
+        <div
+          className={`text-xs ${fetchDegraded ? 'text-amber-400' : 'text-gray-400'}`}
+          role={fetchDegraded ? 'status' : undefined}
+          aria-live={fetchDegraded ? 'polite' : undefined}
+        >
+          {fetchDegraded ? 'Alert data unavailable — retrying…' : 'No active alerts.'}
+        </div>
       </div>
     );
   }

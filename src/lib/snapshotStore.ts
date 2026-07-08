@@ -32,22 +32,34 @@ export interface SnapshotState {
   generatedAtMs: number | null;
   /**
    * Difference (ms) between server time at fetch-receipt and the client's
-   * local clock. Added to `Date.now()` to produce `serverNow()`. `0` when
-   * we have no authoritative signal to calibrate against (before first
-   * fetch, or when `generated_at_ms` is absent).
+   * local clock. Added to `Date.now()` to produce `serverNow()`.
    *
-   * Known limitation (documented in swarm audit 2026-04-18 and Codex
-   * pass 2): `generated_at_ms` is snapshot-generation time, not wall-clock
-   * server-now, so under SWR cache max-age ~60s the offset can under-
-   * estimate the true skew by up to the cache age. Accepted trade-off:
-   * avoids an extra round-trip or Date-header dependency.
+   * Calibrated from `publishSnapshot`'s `responseServerNowMs` (the fetch
+   * Response's `Date` + `Age` headers) when available — this reflects
+   * actual HTTP response time, not snapshot-generation time, so it stays
+   * accurate even when the Worker's `s-maxage=60, stale-while-revalidate=30`
+   * policy (worker/constants.ts) serves a cached response. Falls back to
+   * `generatedAtMs - now` when the response didn't carry a usable `Date`
+   * header (older/non-Cloudflare responses, or a `Date` header that failed
+   * to parse) — the pre-2026-07-08 behavior, which under-estimates skew by
+   * up to the cache age in the worst case.
    */
   clockOffset: number;
+  /**
+   * Consecutive LIVE fetch failures (fetchLive's catch path, after
+   * fetchWithRetry's internal retries are already exhausted) since the last
+   * successful live fetch. Reset to 0 by every successful `publishSnapshot`
+   * call with `isLive: true` — including one whose payload is missing
+   * `generated_at_ms`, because a successful HTTP round-trip is not a fetch
+   * failure. Historical fetches never touch this field.
+   */
+  consecutiveLiveFailures: number;
 }
 
 const INITIAL_STATE: SnapshotState = {
   generatedAtMs: null,
   clockOffset: 0,
+  consecutiveLiveFailures: 0,
 };
 
 let currentState: SnapshotState = INITIAL_STATE;
@@ -68,6 +80,17 @@ export interface PublishSnapshotOptions {
    * flag degrades safely rather than silently polluting the store.
    */
   isLive: boolean;
+  /**
+   * Wall-clock server time (ms) at response receipt, calibrated from the
+   * fetch Response's `Date` header (plus `Age`, if present — see Task 4
+   * design notes on why both). Preferred clock-offset source over
+   * `generatedAtMs` because it reflects when the HTTP response was actually
+   * served, not when the underlying snapshot was generated. `null`/
+   * `undefined` when the `Date` header was missing or unparseable — the
+   * store then falls back to the `generatedAtMs`-derived offset (prior
+   * behavior).
+   */
+  responseServerNowMs?: number | null;
 }
 
 /**
@@ -94,20 +117,113 @@ export function publishSnapshot(
 
   const now = Date.now();
   const hasTime = generatedAtMs !== null && Number.isFinite(generatedAtMs) && generatedAtMs > 0;
+  const responseServerNowMs = options.responseServerNowMs;
+  const hasResponseServerNow =
+    responseServerNowMs !== null &&
+    responseServerNowMs !== undefined &&
+    Number.isFinite(responseServerNowMs) &&
+    responseServerNowMs > 0;
+
+  // Reset unconditionally on every successful LIVE publish — a successful
+  // HTTP round-trip is not a fetch failure, even one whose payload is
+  // missing generated_at_ms (the !hasTime branch below). This is computed
+  // BEFORE the dedup comparison and folded into `next` up front so it can
+  // never be silently dropped by the early `return` below: if the reset
+  // were instead applied only after a dedup check keyed on
+  // generatedAtMs/clockOffset, a republish of an UNCHANGED generatedAtMs/
+  // clockOffset (see snapshotStore.test.ts's "unchanged from the current
+  // state" test) would hit that early return and leave
+  // consecutiveLiveFailures stuck at its pre-success value forever.
+  const consecutiveLiveFailures = 0;
+  const failuresChanged = consecutiveLiveFailures !== currentState.consecutiveLiveFailures;
+
   const next: SnapshotState = hasTime
-    ? { generatedAtMs, clockOffset: (generatedAtMs as number) - now }
+    ? {
+        generatedAtMs,
+        clockOffset: hasResponseServerNow
+          ? (responseServerNowMs as number) - now
+          : (generatedAtMs as number) - now,
+        consecutiveLiveFailures,
+      }
     : // Live fetch with missing/invalid generated_at_ms: clear both fields so
       // the banner degrades to "cannot tell" rather than comparing wall-clock
       // time against a stale timestamp preserved from a previous publish.
-      { generatedAtMs: null, clockOffset: 0 };
-  // Avoid spurious notifications when nothing actually changed.
+      { generatedAtMs: null, clockOffset: 0, consecutiveLiveFailures };
+  // Avoid spurious notifications when NOTHING actually changed — but a
+  // changed failure counter counts as a change requiring emit; otherwise a
+  // publish that resets consecutiveLiveFailures from a nonzero value back
+  // to 0 while generatedAtMs/clockOffset happen to be unchanged would
+  // never notify AlertsPanel's degraded-notice subscriber that the reset
+  // happened.
   if (
     next.generatedAtMs === currentState.generatedAtMs &&
-    next.clockOffset === currentState.clockOffset
+    next.clockOffset === currentState.clockOffset &&
+    !failuresChanged
   ) {
     return;
   }
   currentState = next;
+  emit();
+}
+
+/**
+ * Maximum allowed disagreement (ms) between a response's Date+Age-derived
+ * server-now and the client's own local clock before that derived value is
+ * treated as untrustworthy and discarded. Guards against a malformed/
+ * misparsed `Date` header, an intermediate proxy that doesn't preserve
+ * `Date` correctly, or any other implausible reading silently injecting a
+ * badly wrong `clockOffset` that makes `serverNow()` (and the staleness
+ * banner it feeds) actively lie — which would be worse than the
+ * pre-existing `generated_at_ms`-derived under-estimation this task exists
+ * to fix. 5 minutes is generous enough to never reject a legitimately
+ * skewed client clock (calibrating for that skew is this feature's whole
+ * point) while catching a reading that's off by an implausible amount.
+ */
+export const RESPONSE_SERVER_NOW_TRUST_THRESHOLD_MS = 5 * 60_000;
+
+/**
+ * Validates a Date+Age-derived candidate server-now against the client's
+ * own clock before it's trusted for `clockOffset` calibration. Returns
+ * `candidateMs` unchanged when it's within
+ * `RESPONSE_SERVER_NOW_TRUST_THRESHOLD_MS` of `localNowMs` (or when
+ * `candidateMs` is `null` — nothing to validate). Returns `null` — logging a
+ * `console.warn` — when the disagreement exceeds the threshold, so the
+ * caller (`fetchLive` in WeatherMap.tsx) falls back to the pre-existing
+ * `generated_at_ms`-derived calibration for that fetch instead of
+ * publishing an implausible offset.
+ */
+export function validateResponseServerNowMs(
+  candidateMs: number | null,
+  localNowMs: number = Date.now(),
+): number | null {
+  if (candidateMs === null) return null;
+  const driftMs = Math.abs(candidateMs - localNowMs);
+  if (driftMs > RESPONSE_SERVER_NOW_TRUST_THRESHOLD_MS) {
+    console.warn(
+      `Discarding Date/Age clock calibration: implied server-now differs from the local clock by ${driftMs}ms ` +
+        `(> ${RESPONSE_SERVER_NOW_TRUST_THRESHOLD_MS}ms trust threshold); falling back to the generated_at_ms-derived offset for this fetch.`,
+    );
+    return null;
+  }
+  return candidateMs;
+}
+
+/**
+ * Record a failed LIVE fetch attempt. Lets `AlertsPanel` distinguish "no
+ * active alerts" (data arrived, list is empty) from "alert data unavailable"
+ * (the fetch itself is failing) — including a session that has NEVER had a
+ * successful fetch, where `allAlerts` is still its initial `[]`. Deliberately
+ * separate from `publishSnapshot`: a failed fetch has no `generatedAtMs` to
+ * publish, and must not touch the staleness banner's binary FRESH/BROKEN
+ * state (StalenessBanner.tsx header comment) — the banner's "cannot tell"
+ * (`generatedAtMs: null`) state and this counter are independent signals a
+ * caller may combine, not one merged three-way state.
+ */
+export function publishLiveFetchFailure(): void {
+  currentState = {
+    ...currentState,
+    consecutiveLiveFailures: currentState.consecutiveLiveFailures + 1,
+  };
   emit();
 }
 

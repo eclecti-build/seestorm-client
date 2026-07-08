@@ -23,14 +23,18 @@ import { buildEventColorExpression, buildTornadoColorExpression } from '@/lib/al
 import { useColorVisionMode } from '@/lib/preferences';
 import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import { boostBasemapContrast } from '@/lib/mapContrast';
-import { alertLayerFilter } from '@/lib/alertFilter';
+import { alertLayerFilter, dimIfExpired } from '@/lib/alertFilter';
 import { getUserLocation, USER_LOCATION_KEY } from '@/lib/userLocation';
 import { applyGeoDefaultIfNeeded } from '@/lib/geoDefault';
 import { STATE_VIEW_ZOOM } from '@/lib/coverage';
-import { POLL_INTERVAL_MS } from '@/lib/constants';
+import { MAP_LOAD_TIMEOUT_MS, POLL_INTERVAL_MS } from '@/lib/constants';
 import { fetchJsonWithRetry, isAbortError } from '@/lib/fetchWithRetry';
 import { useClockOffset } from '@/lib/useClockOffset';
-import { publishSnapshot } from '@/lib/snapshotStore';
+import {
+  publishLiveFetchFailure,
+  publishSnapshot,
+  validateResponseServerNowMs,
+} from '@/lib/snapshotStore';
 import AlertsPanel from './AlertsPanel';
 import LocationChip from './LocationChip';
 import MapLegend from './MapLegend';
@@ -215,6 +219,7 @@ export default function WeatherMap() {
   // opt-in (the "+1h forecast" toggle below) so "live" reads as the leading edge.
   const [showForecast, setShowForecast] = useState<boolean>(false);
   const [mapReady, setMapReady] = useState<boolean>(false);
+  const [mapLoadFailed, setMapLoadFailed] = useState<boolean>(false);
   const colorVisionMode = useColorVisionMode();
   // Init runs once; it reads the mode through a ref so a later mode change does
   // NOT re-run init (which would rebuild the whole map). Live updates are
@@ -348,6 +353,15 @@ export default function WeatherMap() {
     const fc = buildMotionFeatures(ingestAlerts);
     (map.current.getSource('alert-motion') as maplibregl.GeoJSONSource).setData(fc);
   }, []);
+
+  // Latest computed map payload, kept even if the map isn't ready to render
+  // it yet — renderFeatures/renderMotion already no-op safely when the
+  // MapLibre source doesn't exist (see above). The mapReady-catchup effect
+  // below replays these the instant the map's sources exist, so alert data
+  // that arrived before basemap load doesn't wait for the next
+  // POLL_INTERVAL_MS tick to reach the map.
+  const lastMapFeaturesRef = useRef<AlertsResponse | null>(null);
+  const lastMotionAlertsRef = useRef<IngestAlert[] | null>(null);
 
   // User's saved state (if any) — drives the userState filter so the side
   // panel and map don't drown the user in alerts from the other 7 Great
@@ -562,18 +576,40 @@ export default function WeatherMap() {
   const fetchLive = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        const raw = await fetchJsonWithRetry('/v1/active-events.json', { signal });
+        let responseServerNowMs: number | null = null;
+        const raw = await fetchJsonWithRetry('/v1/active-events.json', {
+          signal,
+          onResponse: (resp) => {
+            const dateMs = Date.parse(resp.headers.get('date') ?? '');
+            if (!Number.isFinite(dateMs)) return;
+            const ageSec = Number.parseInt(resp.headers.get('age') ?? '0', 10);
+            const candidateMs = dateMs + (Number.isFinite(ageSec) ? ageSec * 1_000 : 0);
+            // REVIEW AMENDMENT: clamp before trusting it — see
+            // validateResponseServerNowMs (Steps 9-12 above). An implausible
+            // reading (>5min off the local clock) falls back to null here,
+            // which publishSnapshot then treats the same as "no Date header
+            // at all" (hasResponseServerNow === false in Task 4 Step 7).
+            responseServerNowMs = validateResponseServerNowMs(candidateMs);
+          },
+        });
         const snapshot = parseIngestSnapshot(raw);
-        // Calibrate clock offset against the server's generation timestamp,
-        // and publish into the global store so the root-layout StalenessBanner
-        // can render without threading props through the dynamic map import.
+        // Record the snapshot's generation timestamp for the map-local clock
+        // hook, then publish the Date+Age-calibrated server time into the
+        // global store so the root-layout StalenessBanner can render without
+        // threading props through the dynamic map import.
         recordServerTime(snapshot.generated_at_ms);
-        publishSnapshot(snapshot.generated_at_ms ?? null, { isLive: true });
+        publishSnapshot(snapshot.generated_at_ms ?? null, {
+          isLive: true,
+          responseServerNowMs,
+        });
         const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
           userPoint: userPointRef.current ?? undefined,
+          nowMs: serverNow(),
         });
+        lastMapFeaturesRef.current = mapFeatures;
+        lastMotionAlertsRef.current = motionAlerts;
         // Defer the heavy state apply off the click thread. `source.setData()`
         // with the full GeoJSON blob is what pinned production INP at 2,104 ms
         // on the LIVE pill (swarm audit 2026-04-18, Tier 1 #1). React 19's
@@ -594,9 +630,10 @@ export default function WeatherMap() {
         // away would be misleading. Real failures (retry exhausted) still log.
         if (isAbortError(err)) return;
         console.error('Failed to fetch live snapshot:', err);
+        publishLiveFetchFailure();
       }
     },
-    [renderFeatures, renderMotion, recordServerTime],
+    [renderFeatures, renderMotion, recordServerTime, serverNow],
   );
 
   // Fetch one historical snapshot by timestamp key. Same abort/retry discipline
@@ -615,11 +652,24 @@ export default function WeatherMap() {
         // deliberately skip `recordServerTime` here and pass `isLive:false`
         // to `publishSnapshot` so the store no-ops.
         publishSnapshot(snapshot.generated_at_ms ?? null, { isLive: false });
+        // Judge expiry against the snapshot's OWN time, never live serverNow()
+        // — a history snapshot's alerts are routinely >15min old by the time a
+        // user scrubs to them, so live "now" would drop nearly every
+        // historical alert. Mirrors the historical-fetch isolation already
+        // documented in snapshotStore.ts (isLive: false skips clock/staleness
+        // publishing) applied to expiry instead of clock offset.
+        const historicalNowMs =
+          snapshot.generated_at_ms && Number.isFinite(snapshot.generated_at_ms)
+            ? snapshot.generated_at_ms
+            : Date.parse(snapshot.generated_at);
         const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
           countyLookup: countyLookupRef.current ?? undefined,
           userState: userStateRef.current ?? undefined,
           userPoint: userPointRef.current ?? undefined,
+          nowMs: historicalNowMs,
         });
+        lastMapFeaturesRef.current = mapFeatures;
+        lastMotionAlertsRef.current = motionAlerts;
         // Same rationale as fetchLive — defer the heavy state apply so the
         // playback-bar click handler returns fast. See Tier 1 #1 in the swarm
         // audit (2026-04-18).
@@ -688,7 +738,13 @@ export default function WeatherMap() {
   // synchronously in this effect body — so react-hooks/set-state-in-effect
   // is a false positive here.
   useEffect(() => {
-    if (!mapReady || !isLive) return;
+    // Deliberately NOT gated on mapReady — alert data (AlertsPanel, the
+    // count badge) must not wait on basemap load. renderFeatures/
+    // renderMotion (called inside fetchLive/fetchHistory) already no-op
+    // until the map's sources exist; the catch-up effect above replays the
+    // latest payload the instant mapReady flips. See swarm audit 2026-04-18
+    // Tier 1 #2c and the Tier 1 client-safety remediation (2026-07-08).
+    if (!isLive) return;
     const controller = new AbortController();
     const { signal } = controller;
 
@@ -725,7 +781,7 @@ export default function WeatherMap() {
       window.removeEventListener('focus', onFocus);
       controller.abort();
     };
-  }, [mapReady, isLive, fetchLive, fetchHistory]);
+  }, [isLive, fetchLive, fetchHistory]);
 
   // When scrubbed to historical, fetch that snapshot. Same async-setState
   // pattern. AbortController cleanup cancels the previous historical fetch
@@ -1058,7 +1114,32 @@ export default function WeatherMap() {
     // without the always-on text strip the brand chips used to crowd.
     m.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
 
+    let mapLoaded = false;
+    const loadTimeoutId = setTimeout(() => {
+      if (!mapLoaded) {
+        console.error(`MapLibre style failed to load within ${MAP_LOAD_TIMEOUT_MS}ms`);
+        setMapLoadFailed(true);
+      }
+    }, MAP_LOAD_TIMEOUT_MS);
+
+    m.on('error', (e) => {
+      console.error('MapLibre error:', e.error);
+      // Only surface the degraded overlay for PRE-load failures. MapLibre's
+      // map-level 'error' event also fires for recoverable post-load
+      // conditions (transient tile/glyph/sprite fetch failures), which must
+      // not permanently blanket a working map — post-load errors stay
+      // console-only. (2026-07-08 orchestration amendment, opus review of
+      // Tier 1 Task 2: transient tile error would otherwise hide the live
+      // map until manual reload.)
+      if (!mapLoaded) {
+        setMapLoadFailed(true);
+      }
+    });
+
     m.on('load', () => {
+      mapLoaded = true;
+      clearTimeout(loadTimeoutId);
+      setMapLoadFailed(false);
       // Lift roads and place labels out from under the radar + alert overlays.
       // Runs once, before any of our own layers are added, so we only walk the
       // basemap's own layers and don't compound-boost on re-render.
@@ -1173,21 +1254,21 @@ export default function WeatherMap() {
         type: 'fill',
         source: 'alerts',
         filter: warningFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.15 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': dimIfExpired(0.15, 0.35) },
       });
       m.addLayer({
         id: 'alert-fills-watch',
         type: 'fill',
         source: 'alerts',
         filter: watchFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.09 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': dimIfExpired(0.09, 0.35) },
       });
       m.addLayer({
         id: 'alert-fills-advisory',
         type: 'fill',
         source: 'alerts',
         filter: advisoryFilter,
-        paint: { 'fill-color': eventColor, 'fill-opacity': 0.04 },
+        paint: { 'fill-color': eventColor, 'fill-opacity': dimIfExpired(0.04, 0.35) },
       });
 
       // County lines — drawn first (below state lines) so state borders win
@@ -1354,7 +1435,7 @@ export default function WeatherMap() {
         paint: {
           'line-color': eventColor,
           'line-width': alertWarningWidth,
-          'line-opacity': alertWarningOpacity,
+          'line-opacity': dimIfExpired(alertWarningOpacity, 0.35),
         },
       });
       m.addLayer({
@@ -1365,7 +1446,7 @@ export default function WeatherMap() {
         paint: {
           'line-color': eventColor,
           'line-width': alertWatchWidth,
-          'line-opacity': alertWatchOpacity,
+          'line-opacity': dimIfExpired(alertWatchOpacity, 0.35),
           'line-dasharray': [2, 2],
         },
       });
@@ -1377,7 +1458,7 @@ export default function WeatherMap() {
         paint: {
           'line-color': eventColor,
           'line-width': alertAdvisoryWidth,
-          'line-opacity': alertAdvisoryOpacity,
+          'line-opacity': dimIfExpired(alertAdvisoryOpacity, 0.35),
         },
       });
 
@@ -1678,9 +1759,23 @@ export default function WeatherMap() {
     map.current = m;
 
     return () => {
+      clearTimeout(loadTimeoutId);
       m.remove();
     };
   }, [loadCountiesForState]);
+
+  // Catch the map up the instant its style finishes loading. The poll effect
+  // below is intentionally NOT gated on `mapReady` (alert fetching must not
+  // wait on basemap load), so if a fetch resolves before the map's `load`
+  // event fires, renderFeatures/renderMotion no-op (their sources don't exist
+  // yet) and that data would otherwise sit unpainted until the next
+  // POLL_INTERVAL_MS tick. Replay the latest computed payload as soon as
+  // `mapReady` flips so there's no up-to-30s gap on a slow basemap load.
+  useEffect(() => {
+    if (!mapReady) return;
+    if (lastMapFeaturesRef.current) renderFeatures(lastMapFeaturesRef.current);
+    if (lastMotionAlertsRef.current) renderMotion(lastMotionAlertsRef.current);
+  }, [mapReady, renderFeatures, renderMotion]);
 
   // True only when at least one rendered alert is a confirmed tornado.
   // Gates the pulse loop off the common (clear-weather) path entirely.
@@ -1810,6 +1905,28 @@ export default function WeatherMap() {
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
+      {mapLoadFailed && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="absolute inset-0 flex items-center justify-center bg-gray-950/95 text-white text-center p-6"
+        >
+          <div className="max-w-sm space-y-3">
+            <div className="text-lg font-semibold">Basemap unavailable</div>
+            <div className="text-sm text-gray-300">
+              The map tiles failed to load, but the alert list is still live — check the panel for
+              active weather alerts, or reload to try the map again.
+            </div>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-sm font-semibold"
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Alert count badge — counts ALL active alerts, including zone-aggregate
           products (Watches) that don't render on the map. Previously this

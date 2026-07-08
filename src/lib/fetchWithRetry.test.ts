@@ -133,6 +133,45 @@ describe('fetchJsonWithRetry', () => {
     expect(sleep).toHaveBeenCalledTimes(1);
   });
 
+  it('invokes onResponse with the raw Response before consuming the body', async () => {
+    const headers = new Headers({ date: 'Wed, 19 Apr 2026 12:00:00 GMT', age: '12' });
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers,
+      json: async () => ({ hello: 'world' }),
+    });
+    const onResponse = vi.fn();
+    const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+    const result = await fetchJsonWithRetry('/x', { sleep, onResponse });
+    expect(result).toEqual({ hello: 'world' });
+    expect(onResponse).toHaveBeenCalledTimes(1);
+    const resp = onResponse.mock.calls[0][0] as Response;
+    expect(resp.headers.get('date')).toBe('Wed, 19 Apr 2026 12:00:00 GMT');
+    expect(resp.headers.get('age')).toBe('12');
+  });
+
+  it('a throwing onResponse hook does not fail the fetch', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const body = { hello: 'world' };
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => body,
+    });
+
+    await expect(
+      fetchJsonWithRetry('/x', {
+        sleep: vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve()),
+        onResponse: () => {
+          throw new Error('boom');
+        },
+      }),
+    ).resolves.toEqual(body);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   // Fix 3 (Codex review, Suggestion → prod bug): a hung fetch previously
   // never resolved/rejected, so the retry path was never reached and the
   // caller kept scheduling overlapping polls. The per-attempt timeout

@@ -11,12 +11,16 @@ import {
 // /v1/geo's privacy contract depends on staying non-storeable.
 
 describe('worker cache-control constants', () => {
-  it('LIVE carries SWR for thundering-herd mitigation at 30s TTL rollover', () => {
-    expect(LIVE_CACHE_CONTROL).toBe('public, max-age=30, s-maxage=60, stale-while-revalidate=30');
+  it('LIVE carries SWR for thundering-herd mitigation at 30s TTL rollover, plus stale-if-error to ride out brief R2 outages', () => {
+    expect(LIVE_CACHE_CONTROL).toBe(
+      'public, max-age=30, s-maxage=60, stale-while-revalidate=30, stale-if-error=300',
+    );
   });
 
-  it('LIST carries SWR for R2 class-A op amortization', () => {
-    expect(LIST_CACHE_CONTROL).toBe('public, max-age=60, s-maxage=60, stale-while-revalidate=60');
+  it('LIST carries SWR for R2 class-A op amortization, plus stale-if-error to ride out brief R2 outages', () => {
+    expect(LIST_CACHE_CONTROL).toBe(
+      'public, max-age=60, s-maxage=60, stale-while-revalidate=60, stale-if-error=300',
+    );
   });
 
   it('HISTORY is one-year immutable (archived timestamps never change content)', () => {

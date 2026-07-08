@@ -11,6 +11,8 @@ import {
   filterAreaDescByState,
   groupByFamily,
   ingestToWeatherAlert,
+  isExpiredInGrace,
+  isPastGracePeriod,
   parseIngestSnapshot,
   priorityForEvent,
   resolveAlertUrl,
@@ -61,12 +63,38 @@ function snap(alerts: IngestAlert[]): IngestSnapshot {
   };
 }
 
+const FIXTURE_NOW_MS = Date.parse('2026-04-17T20:00:00Z');
+
 describe('tierForEvent', () => {
   it('classifies Warning, Watch, and everything else', () => {
     expect(tierForEvent('Tornado Warning')).toBe('Warning');
     expect(tierForEvent('Severe Thunderstorm Watch')).toBe('Watch');
     expect(tierForEvent('Special Weather Statement')).toBe('Advisory');
     expect(tierForEvent('Flood Advisory')).toBe('Advisory');
+  });
+});
+
+describe('isPastGracePeriod / isExpiredInGrace', () => {
+  const EXPIRES = '2026-04-17T20:30:00Z';
+  const EXPIRES_MS = Date.parse(EXPIRES);
+
+  it('isExpiredInGrace is false before expiry', () => {
+    expect(isExpiredInGrace(EXPIRES, EXPIRES_MS - 1_000)).toBe(false);
+  });
+
+  it('isExpiredInGrace is true just past expiry, within the grace window', () => {
+    expect(isExpiredInGrace(EXPIRES, EXPIRES_MS + 5 * 60_000)).toBe(true);
+    expect(isPastGracePeriod(EXPIRES, EXPIRES_MS + 5 * 60_000)).toBe(false);
+  });
+
+  it('isPastGracePeriod is true once the grace period has fully elapsed', () => {
+    expect(isPastGracePeriod(EXPIRES, EXPIRES_MS + 16 * 60_000)).toBe(true);
+    expect(isExpiredInGrace(EXPIRES, EXPIRES_MS + 16 * 60_000)).toBe(false);
+  });
+
+  it('both fail OPEN (false) on an unparseable expires timestamp', () => {
+    expect(isExpiredInGrace('not-a-timestamp', Date.now())).toBe(false);
+    expect(isPastGracePeriod('not-a-timestamp', Date.now())).toBe(false);
   });
 });
 
@@ -270,6 +298,7 @@ describe('buildAlertViews', () => {
         ingest({ nws_id: 'B', event_type: 'Tornado Warning' }), // priority 0
         ingest({ nws_id: 'C', event_type: 'Flash Flood Warning' }), // priority 2
       ]),
+      { nowMs: FIXTURE_NOW_MS },
     );
     expect(out.mapFeatures.type).toBe('FeatureCollection');
     expect(out.mapFeatures.features.map((f) => f.properties.nwsId)).toEqual(['B', 'C', 'A']);
@@ -281,6 +310,7 @@ describe('buildAlertViews', () => {
         ingest({ nws_id: 'POLY', geometry: STUB_GEOMETRY }),
         ingest({ nws_id: 'COUNTY_WATCH', event_type: 'Tornado Watch', geometry: null }),
       ]),
+      { nowMs: FIXTURE_NOW_MS },
     );
     expect(out.mapFeatures.features.map((f) => f.properties.nwsId)).toEqual(['POLY']);
     expect(out.listAlerts.map((a) => a.properties.nwsId).sort()).toEqual(['COUNTY_WATCH', 'POLY']);
@@ -316,7 +346,7 @@ describe('buildAlertViews', () => {
           geometry: null,
         }),
       ]),
-      { countyLookup },
+      { countyLookup, nowMs: FIXTURE_NOW_MS },
     );
     expect(out.mapFeatures.features.map((f) => f.properties.nwsId)).toEqual(['WATCH']);
     // Both alerts stay in the side panel regardless of hydration success.
@@ -335,6 +365,7 @@ describe('buildAlertViews', () => {
           geometry: null,
         }),
       ]),
+      { nowMs: FIXTURE_NOW_MS },
     );
     expect(out.mapFeatures.features).toHaveLength(0);
     expect(out.listAlerts).toHaveLength(1);
@@ -347,12 +378,77 @@ describe('buildAlertViews', () => {
         ingest({ nws_id: 'SW', event_type: 'Severe Thunderstorm Warning' }),
         ingest({ nws_id: 'TO', event_type: 'Tornado Warning' }),
       ]),
+      { nowMs: FIXTURE_NOW_MS },
     );
     expect(out.listAlerts.map((a) => a.properties.event)).toEqual([
       'Tornado Warning',
       'Severe Thunderstorm Warning',
       'Tornado Watch',
     ]);
+  });
+});
+
+describe('buildAlertViews — expiry grace period', () => {
+  const NOW = Date.parse('2026-04-17T21:00:00Z');
+
+  it('marks an alert expired-in-grace when past expires but within ALERT_EXPIRY_GRACE_MS', () => {
+    const out = buildAlertViews(
+      snap([ingest({ nws_id: 'A', expires_at: new Date(NOW - 5 * 60_000).toISOString() })]),
+      { nowMs: NOW },
+    );
+    expect(out.listAlerts).toHaveLength(1);
+    expect(out.listAlerts[0].properties.expired).toBe(true);
+  });
+
+  it('drops an alert entirely once past expires + ALERT_EXPIRY_GRACE_MS', () => {
+    const out = buildAlertViews(
+      snap([ingest({ nws_id: 'A', expires_at: new Date(NOW - 16 * 60_000).toISOString() })]),
+      { nowMs: NOW },
+    );
+    expect(out.listAlerts).toHaveLength(0);
+    expect(out.mapFeatures.features).toHaveLength(0);
+  });
+
+  it('does not mark a still-active alert expired', () => {
+    const out = buildAlertViews(
+      snap([ingest({ nws_id: 'A', expires_at: new Date(NOW + 10 * 60_000).toISOString() })]),
+      { nowMs: NOW },
+    );
+    expect(out.listAlerts[0].properties.expired).toBe(false);
+  });
+
+  it('fails OPEN (keeps, not-expired) on an unparseable expires timestamp', () => {
+    const out = buildAlertViews(snap([ingest({ nws_id: 'A', expires_at: 'not-a-timestamp' })]), {
+      nowMs: NOW,
+    });
+    expect(out.listAlerts).toHaveLength(1);
+    expect(out.listAlerts[0].properties.expired).toBe(false);
+  });
+
+  it('demotes expired-in-grace alerts below active ones regardless of tier priority', () => {
+    const out = buildAlertViews(
+      snap([
+        ingest({
+          nws_id: 'EXPIRED_TOR',
+          event_type: 'Tornado Warning',
+          expires_at: new Date(NOW - 5 * 60_000).toISOString(),
+        }),
+        ingest({
+          nws_id: 'ACTIVE_WATCH',
+          event_type: 'Tornado Watch',
+          expires_at: new Date(NOW + 30 * 60_000).toISOString(),
+        }),
+      ]),
+      { nowMs: NOW },
+    );
+    expect(out.listAlerts.map((a) => a.properties.nwsId)).toEqual(['ACTIVE_WATCH', 'EXPIRED_TOR']);
+  });
+
+  it('defaults nowMs to Date.now() when not supplied (back-compat for existing callers)', () => {
+    const out = buildAlertViews(
+      snap([ingest({ nws_id: 'A', expires_at: new Date(Date.now() + 30 * 60_000).toISOString() })]),
+    );
+    expect(out.listAlerts[0].properties.expired).toBe(false);
   });
 });
 
@@ -694,7 +790,7 @@ describe('buildAlertViews — userPoint filter', () => {
           },
         }),
       ]),
-      { userPoint: inside },
+      { userPoint: inside, nowMs: FIXTURE_NOW_MS },
     );
     expect(out.listAlerts.map((a) => a.properties.nwsId)).toEqual(['IN-POLY']);
   });
@@ -706,7 +802,7 @@ describe('buildAlertViews — userPoint filter', () => {
         ingest({ nws_id: 'WATCH-WI', geometry: null, area_state: 'WI' }), // zone-only WI
         ingest({ nws_id: 'WATCH-IL', geometry: null, area_state: 'IL' }), // zone-only IL — should drop for WI user
       ]),
-      { userPoint: inside },
+      { userPoint: inside, nowMs: FIXTURE_NOW_MS },
     );
     expect(out.listAlerts.map((a) => a.properties.nwsId).sort()).toEqual([
       'POLY-MATCH',
@@ -737,7 +833,7 @@ describe('buildAlertViews — userPoint filter', () => {
           },
         }),
       ]),
-      { userPoint: inside, userState: 'IL' }, // userState would accept; userPoint rejects
+      { userPoint: inside, userState: 'IL', nowMs: FIXTURE_NOW_MS }, // userState would accept; userPoint rejects
     );
     expect(out.listAlerts).toHaveLength(0);
   });
@@ -766,7 +862,7 @@ describe('buildAlertViews — userPoint filter', () => {
           },
         }),
       ]),
-      { userPoint: inside },
+      { userPoint: inside, nowMs: FIXTURE_NOW_MS },
     );
     expect(out.motionAlerts.map((a) => a.nws_id)).toEqual(['IN-POLY']);
   });
@@ -779,7 +875,7 @@ describe('buildAlertViews — userState filter', () => {
         ingest({ nws_id: 'WI1', area_state: 'WI' }),
         ingest({ nws_id: 'IL1', area_state: 'IL' }),
       ]),
-      { userState: 'WI' },
+      { userState: 'WI', nowMs: FIXTURE_NOW_MS },
     );
     expect(out.listAlerts.map((a) => a.properties.nwsId)).toEqual(['WI1']);
   });
@@ -790,7 +886,7 @@ describe('buildAlertViews — userState filter', () => {
         ingest({ nws_id: 'BORDER', area_state: 'IL', states: ['IL', 'WI'] }),
         ingest({ nws_id: 'IL_ONLY', area_state: 'IL', states: ['IL'] }),
       ]),
-      { userState: 'WI' },
+      { userState: 'WI', nowMs: FIXTURE_NOW_MS },
     );
     expect(out.listAlerts.map((a) => a.properties.nwsId)).toEqual(['BORDER']);
   });
@@ -801,6 +897,7 @@ describe('buildAlertViews — userState filter', () => {
         ingest({ nws_id: 'WI1', area_state: 'WI' }),
         ingest({ nws_id: 'IL1', area_state: 'IL' }),
       ]),
+      { nowMs: FIXTURE_NOW_MS },
     );
     expect(out.listAlerts).toHaveLength(2);
   });
@@ -815,7 +912,7 @@ describe('buildAlertViews — userState filter', () => {
         ingest({ nws_id: 'IL1', area_state: 'IL' }),
         ingest({ nws_id: 'BORDER', area_state: 'IL', states: ['IL', 'WI'] }),
       ]),
-      { userState: 'WI' },
+      { userState: 'WI', nowMs: FIXTURE_NOW_MS },
     );
     expect(out.motionAlerts.map((a) => a.nws_id)).toEqual(['WI1', 'BORDER']);
   });
@@ -825,7 +922,7 @@ describe('buildAlertViews — userState filter', () => {
       ingest({ nws_id: 'WI1', area_state: 'WI' }),
       ingest({ nws_id: 'IL1', area_state: 'IL' }),
     ]);
-    const out = buildAlertViews(input);
+    const out = buildAlertViews(input, { nowMs: FIXTURE_NOW_MS });
     expect(out.motionAlerts).toEqual(input.alerts);
   });
 });
@@ -840,6 +937,7 @@ describe('groupByFamily', () => {
         ingest({ nws_id: 'STW', event_type: 'Severe Thunderstorm Warning' }),
         ingest({ nws_id: 'SWS', event_type: 'Special Weather Statement' }),
       ]),
+      { nowMs: FIXTURE_NOW_MS },
     );
     const groups = groupByFamily(out.listAlerts);
     expect(groups.map((g) => g.family)).toEqual([
@@ -853,7 +951,9 @@ describe('groupByFamily', () => {
   });
 
   it('drops empty families', () => {
-    const out = buildAlertViews(snap([ingest({ nws_id: 'X', event_type: 'Tornado Warning' })]));
+    const out = buildAlertViews(snap([ingest({ nws_id: 'X', event_type: 'Tornado Warning' })]), {
+      nowMs: FIXTURE_NOW_MS,
+    });
     const groups = groupByFamily(out.listAlerts);
     expect(groups).toHaveLength(1);
     expect(groups[0].family).toBe('Tornado');

@@ -314,9 +314,15 @@ async function serveObject(
     ?.trim()
     .replace(/^W\//i, '')
     .replace(/^"(.*)"$/, '$1');
-  const object = await env.SNAPSHOTS.get(key, {
-    onlyIf: ifNoneMatch ? { etagDoesNotMatch: ifNoneMatch } : undefined,
-  });
+  let object: Awaited<ReturnType<R2Bucket['get']>>;
+  try {
+    object = await env.SNAPSHOTS.get(key, {
+      onlyIf: ifNoneMatch ? { etagDoesNotMatch: ifNoneMatch } : undefined,
+    });
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'r2_get_failed', key, error: errorMessage(err) }));
+    return serviceUnavailable();
+  }
 
   if (object === null) {
     return notFound();
@@ -354,7 +360,20 @@ async function serveHistoryList(request: Request, url: URL, env: Env): Promise<R
     }
   }
 
-  const snapshots = await listNewestHistoryEntries(env.SNAPSHOTS, limit);
+  let snapshots: HistoryEntry[];
+  try {
+    snapshots = await listNewestHistoryEntries(env.SNAPSHOTS, limit);
+  } catch (err) {
+    const message = errorMessage(err);
+    const isContractViolation = message.startsWith('listNewestHistoryEntries:');
+    console.error(
+      JSON.stringify({
+        event: isContractViolation ? 'history_list_contract_violation' : 'history_list_failed',
+        error: message,
+      }),
+    );
+    return isContractViolation ? internalError() : serviceUnavailable();
+  }
 
   const body = JSON.stringify({
     snapshots,
@@ -607,6 +626,46 @@ function methodNotAllowed(allow = 'GET, HEAD'): Response {
   applyBaselineSecurityHeaders(headers);
   applyCspReportOnly(headers);
   return new Response('Method not allowed', { status: 405, headers });
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * JSON 503 for a transient R2 failure (bucket.get/list threw). Cache-Control:
+ * no-store so neither the browser nor Cloudflare's edge cache a failure
+ * response under the endpoint's normal SWR policy, and Retry-After: 5 gives
+ * well-behaved clients (and this repo's own fetchWithRetry backoff — 250ms/
+ * 1000ms/2000ms, well under 5s) a concrete signal. Replaces Cloudflare's raw
+ * "Error 1101" page, which carries none of the security headers below and
+ * no machine-readable shape.
+ */
+function serviceUnavailable(message = 'Service temporarily unavailable'): Response {
+  const headers = new Headers({
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'retry-after': '5',
+  });
+  applyBaselineSecurityHeaders(headers);
+  applyCspReportOnly(headers);
+  return new Response(JSON.stringify({ error: message }), { status: 503, headers });
+}
+
+/**
+ * JSON 500 for a code-level contract violation (e.g. R2 returning
+ * truncated=true without a cursor — see listNewestHistoryEntries). Distinct
+ * from serviceUnavailable(): this is a bug, not a transient upstream
+ * failure, so no Retry-After — retrying immediately won't help.
+ */
+function internalError(message = 'Internal error'): Response {
+  const headers = new Headers({
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  });
+  applyBaselineSecurityHeaders(headers);
+  applyCspReportOnly(headers);
+  return new Response(JSON.stringify({ error: message }), { status: 500, headers });
 }
 
 /**
