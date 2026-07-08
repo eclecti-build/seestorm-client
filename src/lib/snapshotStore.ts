@@ -213,9 +213,10 @@ export function validateResponseServerNowMs(
  * active alerts" (data arrived, list is empty) from "alert data unavailable"
  * (the fetch itself is failing) — including a session that has NEVER had a
  * successful fetch, where `allAlerts` is still its initial `[]`. Deliberately
- * separate from `publishSnapshot`: a failed fetch has no `generatedAtMs` to
- * publish, and must not touch the staleness banner's binary FRESH/BROKEN
- * state (StalenessBanner.tsx header comment) — the banner's "cannot tell"
+ * separate from `publishSnapshot`: a failed live fetch, or one whose payload
+ * was rejected as untrustworthy, has no `generatedAtMs` to publish, and must not
+ * touch the staleness banner's binary FRESH/BROKEN state
+ * (StalenessBanner.tsx header comment) — the banner's "cannot tell"
  * (`generatedAtMs: null`) state and this counter are independent signals a
  * caller may combine, not one merged three-way state.
  */
