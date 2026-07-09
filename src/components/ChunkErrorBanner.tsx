@@ -108,7 +108,7 @@ export default function ChunkErrorBanner() {
   return (
     <div
       role="alert"
-      aria-live="polite"
+      aria-live="assertive"
       data-testid="chunk-error-banner"
       className="fixed bottom-0 inset-x-0 z-50 bg-amber-600 text-white text-center text-sm sm:text-base font-semibold px-4 py-2 shadow-lg flex items-center justify-center gap-3"
       style={{

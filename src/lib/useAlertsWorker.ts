@@ -26,6 +26,16 @@
  * WeatherMap already owns the same object via countyFeaturesRef, so the
  * retained pointer gives fallback parsing enough data to rebuild
  * syncCountyLookup without duplicating a multi-MB county payload in memory.
+ *
+ * KNOWN intentional trade-off: if a stale tab 404s the alerts worker chunk
+ * itself, the failure fires the Worker instance's own error event. It never
+ * reaches `window` `error`/`unhandledrejection`, so it does not trigger the
+ * ChunkErrorBanner or `error.tsx` reload prompt. That case surfaces as one
+ * `publishLiveFetchFailure` degraded-overlay blip, then self-heals within one
+ * poll cycle because `handleWorkerError` tears the worker down and every later
+ * `parseAndBuild` uses the main-bundle sync fallback. A reload is not required
+ * for correctness, unlike the `dynamic(() => import(WeatherMap))` failure mode
+ * the reload UI exists for.
  */
 
 import type { IngestSnapshot, AlertsResponse, WeatherAlert, IngestAlert } from './alerts';

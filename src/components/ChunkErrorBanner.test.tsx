@@ -35,6 +35,15 @@ describe('ChunkErrorBanner', () => {
     expect(screen.getByTestId('chunk-error-reload')).toBeInTheDocument();
   });
 
+  it('announces the reload banner assertively', () => {
+    render(<ChunkErrorBanner />);
+    act(() => {
+      window.dispatchEvent(new ErrorEvent('error', { message: 'ChunkLoadError' }));
+    });
+
+    expect(screen.getByTestId('chunk-error-banner')).toHaveAttribute('aria-live', 'assertive');
+  });
+
   it('shows the reload banner on an unhandledrejection matching the native failed-dynamic-import text', () => {
     render(<ChunkErrorBanner />);
     const event = new Event('unhandledrejection') as PromiseRejectionEvent & { reason?: unknown };
