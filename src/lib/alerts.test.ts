@@ -16,6 +16,7 @@ import {
   parseIngestSnapshot,
   priorityForEvent,
   resolveAlertUrl,
+  resolveViewNowMs,
   tierForEvent,
   WARNING_COLORS,
   warningColorsFor,
@@ -498,6 +499,27 @@ describe('parseIngestSnapshot', () => {
   it('throws on non-object input', () => {
     expect(() => parseIngestSnapshot(null)).toThrow();
     expect(() => parseIngestSnapshot('snapshot')).toThrow();
+  });
+});
+
+describe('resolveViewNowMs', () => {
+  it('uses caller time unless snapshot-time rendering is requested', () => {
+    const snapshot = snap([]);
+    snapshot.generated_at_ms = FIXTURE_NOW_MS + 1_000;
+
+    expect(resolveViewNowMs(snapshot, FIXTURE_NOW_MS, false)).toBe(FIXTURE_NOW_MS);
+    expect(resolveViewNowMs(snapshot, FIXTURE_NOW_MS, undefined)).toBe(FIXTURE_NOW_MS);
+  });
+
+  it('prefers generated_at_ms for snapshot-time rendering when available', () => {
+    const snapshot = snap([]);
+    snapshot.generated_at_ms = FIXTURE_NOW_MS + 1_000;
+
+    expect(resolveViewNowMs(snapshot, FIXTURE_NOW_MS, true)).toBe(FIXTURE_NOW_MS + 1_000);
+  });
+
+  it('falls back to parsing generated_at for snapshot-time rendering', () => {
+    expect(resolveViewNowMs(snap([]), FIXTURE_NOW_MS + 1_000, true)).toBe(FIXTURE_NOW_MS);
   });
 });
 

@@ -10,7 +10,7 @@
  */
 /// <reference lib="webworker" />
 
-import { parseIngestSnapshot, buildAlertViews } from './alerts';
+import { parseIngestSnapshot, buildAlertViews, resolveViewNowMs } from './alerts';
 import { buildCountyLookup, type CountyLookup } from './countyGeometry';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -62,14 +62,7 @@ ctx.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
 
   try {
     const snapshot = parseIngestSnapshot(msg.raw);
-    const nowMs =
-      msg.useSnapshotTimeAsNow &&
-      snapshot.generated_at_ms &&
-      Number.isFinite(snapshot.generated_at_ms)
-        ? snapshot.generated_at_ms
-        : msg.useSnapshotTimeAsNow
-          ? Date.parse(snapshot.generated_at)
-          : msg.nowMs;
+    const nowMs = resolveViewNowMs(snapshot, msg.nowMs, msg.useSnapshotTimeAsNow);
     const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
       countyLookup: countyLookup ?? undefined,
       userState: msg.userState,

@@ -322,6 +322,25 @@ export function parseIngestSnapshot(raw: unknown): IngestSnapshot {
   };
 }
 
+/**
+ * Resolve the timestamp used to render expiry-sensitive alert views.
+ * Historical snapshots render against their own generated time; live
+ * snapshots keep the caller-provided clock.
+ */
+export function resolveViewNowMs(
+  snapshot: IngestSnapshot,
+  nowMs: number | undefined,
+  useSnapshotTimeAsNow: boolean | undefined,
+): number | undefined {
+  return useSnapshotTimeAsNow &&
+    snapshot.generated_at_ms &&
+    Number.isFinite(snapshot.generated_at_ms)
+    ? snapshot.generated_at_ms
+    : useSnapshotTimeAsNow
+      ? Date.parse(snapshot.generated_at)
+      : nowMs;
+}
+
 // Map-internal shape. `url` + `nwsId` are always present on the shape (null
 // when we have nothing to point at) so downstream code can do a single
 // nullish check instead of switching on schema version.

@@ -42,7 +42,7 @@
  */
 
 import type { IngestSnapshot, AlertsResponse, WeatherAlert, IngestAlert } from './alerts';
-import { parseIngestSnapshot, buildAlertViews } from './alerts';
+import { parseIngestSnapshot, buildAlertViews, resolveViewNowMs } from './alerts';
 import { buildCountyLookup, type CountyLookup } from './countyGeometry';
 
 export interface ParseAndBuildOptions {
@@ -84,12 +84,7 @@ function parseAndBuildSync(
 ): ParseAndBuildResult {
   const snapshot = parseIngestSnapshot(raw);
   const { useSnapshotTimeAsNow, ...viewOptions } = options;
-  const nowMs =
-    useSnapshotTimeAsNow && snapshot.generated_at_ms && Number.isFinite(snapshot.generated_at_ms)
-      ? snapshot.generated_at_ms
-      : useSnapshotTimeAsNow
-        ? Date.parse(snapshot.generated_at)
-        : viewOptions.nowMs;
+  const nowMs = resolveViewNowMs(snapshot, viewOptions.nowMs, useSnapshotTimeAsNow);
   const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
     ...viewOptions,
     countyLookup: countyLookup ?? undefined,
