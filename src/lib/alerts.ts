@@ -11,7 +11,8 @@
 //     visible on the map as multi-county fills even though NWS ships them
 //     without polygon geometry.
 
-import { booleanPointInPolygon, point as turfPoint } from '@turf/turf';
+import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
+import { point as turfPoint } from '@turf/helpers';
 import type { ColorVisionMode } from './colorVisionMode';
 import { ALERT_EXPIRY_GRACE_MS } from './constants';
 

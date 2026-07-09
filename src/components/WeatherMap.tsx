@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState, useCallback, startTransition } fr
 import maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import * as turf from '@turf/turf';
+import bbox from '@turf/bbox';
+import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
+import { point } from '@turf/helpers';
 import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES } from '@/lib/radar';
 import { scrubberMax, clampToScrubberRange } from '@/lib/scrubber';
 import { buildMotionFeatures, setMotionVisibility } from '@/lib/stormMotion';
@@ -324,7 +326,7 @@ export default function WeatherMap() {
     try {
       // turf.bbox returns [minX, minY, maxX, maxY] for 2D geometries — NWS
       // alert polygons are always 2D, so the 4-element form is safe.
-      const [minX, minY, maxX, maxY] = turf.bbox(alert.geometry);
+      const [minX, minY, maxX, maxY] = bbox(alert.geometry);
       // For a degenerate bbox (single-point alert) fitBounds would throw or
       // zoom to max — flyTo with a sane zoom keeps the UX predictable.
       if (minX === maxX && minY === maxY) {
@@ -556,7 +558,7 @@ export default function WeatherMap() {
       // Wrapped in try so a malformed feature can't blank the layer.
       for (const f of features) {
         try {
-          if (turf.booleanPointInPolygon(turf.point([userPt.lon, userPt.lat]), f)) {
+          if (booleanPointInPolygon(point([userPt.lon, userPt.lat]), f)) {
             const props = f.properties as { STATE?: string; COUNTY?: string } | null;
             if (props?.STATE && props.COUNTY) {
               mapInstance.setFilter(layerId, [

@@ -36,7 +36,7 @@ Non-profit severe weather visualization for communities across the United States
 - **React 19**
 - **Tailwind 4** (via `@tailwindcss/postcss`)
 - **MapLibre GL** + `@vis.gl/react-maplibre` for map rendering
-- **Turf** (`@turf/turf`) for geospatial math
+- **Turf** (scoped `@turf/*` packages — bbox, boolean-point-in-polygon, helpers, destination) for geospatial math
 - **Vitest** + `@testing-library/react` + jsdom for tests
 
 ## Deploy

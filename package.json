@@ -34,7 +34,10 @@
     "cf:dev": "wrangler dev"
   },
   "dependencies": {
-    "@turf/turf": "^7.3.4",
+    "@turf/bbox": "^7.3.4",
+    "@turf/boolean-point-in-polygon": "^7.3.4",
+    "@turf/destination": "^7.3.4",
+    "@turf/helpers": "^7.3.4",
     "@vis.gl/react-maplibre": "^8.1.1",
     "lucide-react": "^1.17.0",
     "maplibre-gl": "^5.23.0",
@@ -47,6 +50,7 @@
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@turf/distance": "^7.3.4",
     "@types/geojson": "^7946.0.16",
     "@types/node": "^22",
     "@types/react": "^19",
