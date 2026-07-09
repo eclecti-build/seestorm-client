@@ -21,11 +21,14 @@
  * — a bundler/runtime combination that doesn't support the
  * `new Worker(new URL(...), import.meta.url)` pattern under static export),
  * or after a worker runtime error. For the post-crash case, this client
- * retains a reference to the most recent non-null county FeatureCollection
- * WeatherMap passed in. That is deliberately a reference, not a copy:
- * WeatherMap already owns the same object via countyFeaturesRef, so the
- * retained pointer gives fallback parsing enough data to rebuild
+ * retains a reference to the most recent active state's non-null county
+ * FeatureCollection WeatherMap passed in. That is deliberately a reference,
+ * not a copy: WeatherMap already owns the same object via countyFeaturesRef,
+ * so the retained pointer gives fallback parsing enough data to rebuild
  * syncCountyLookup without duplicating a multi-MB county payload in memory.
+ * After `sendCounties(null, null)` enters all-states mode, the retained
+ * pointer is kept only for a later same-state revisit; worker-crash fallback
+ * must not revive it unless that retained state is still active.
  *
  * KNOWN intentional trade-off: if a stale tab 404s the alerts worker chunk
  * itself, the failure fires the Worker instance's own error event. It never
@@ -176,7 +179,9 @@ export class AlertsWorkerClient {
     this.worker = null;
     try {
       this.syncCountyLookup =
-        this.lastCountiesStateCode && this.lastCountiesGeoJSON
+        this.activeCountyState !== null &&
+        this.activeCountyState === this.lastCountiesStateCode &&
+        this.lastCountiesGeoJSON
           ? buildCountyLookup(this.lastCountiesGeoJSON)
           : null;
     } catch (err) {
@@ -213,7 +218,11 @@ export class AlertsWorkerClient {
 
   async parseAndBuild(raw: unknown, options: ParseAndBuildOptions): Promise<ParseAndBuildResult> {
     if (!this.worker) {
-      return parseAndBuildSync(raw, options, this.syncCountyLookup);
+      return parseAndBuildSync(
+        raw,
+        options,
+        this.activeCountyState !== null ? this.syncCountyLookup : null,
+      );
     }
     const requestId = this.nextRequestId++;
     const msg: WorkerRequest = {

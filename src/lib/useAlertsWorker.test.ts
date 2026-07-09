@@ -249,6 +249,17 @@ describe('AlertsWorkerClient', () => {
     expect(result.mapFeatures.features[0].geometry?.type).toBe('MultiPolygon');
   });
 
+  it('does not revive stale county lookup after a worker error in all-states mode', async () => {
+    const client = new AlertsWorkerClient();
+    client.sendCounties('WI', DANE_COUNTY_FC);
+    client.sendCounties(null, null);
+
+    FakeWorker.lastInstance?.emitError('boom');
+
+    const result = await client.parseAndBuild(RAW_ZONE_ONLY_SNAPSHOT, {});
+    expect(result.mapFeatures.features).toHaveLength(0);
+  });
+
   it('refreshes the retained county reference even when worker county posts are deduped', async () => {
     const client = new AlertsWorkerClient();
     client.sendCounties('WI', FAKE_WI_COUNTIES);
