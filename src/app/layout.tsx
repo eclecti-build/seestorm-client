@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import StalenessBanner from '@/components/StalenessBanner';
+import ChunkErrorBanner from '@/components/ChunkErrorBanner';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -54,6 +55,10 @@ export default function RootLayout({
             route (map, about, etc). Renders nothing when FRESH; there is
             intentionally no middle tier (Open Decisions #11). */}
         <StalenessBanner />
+        {/* Chunk-load-skew reload prompt — see ChunkErrorBanner docblock.
+            Mounted at layout level (not inside the page) so it survives even
+            if the WeatherMap route segment itself crashes into error.tsx. */}
+        <ChunkErrorBanner />
         {children}
       </body>
     </html>

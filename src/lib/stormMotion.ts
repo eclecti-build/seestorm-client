@@ -11,7 +11,8 @@
 // (forwardBearing = (direction_deg + 180) % 360) and store the forward bearing
 // on every feature so map layers can just read it off properties.
 
-import * as turf from '@turf/turf';
+import destination from '@turf/destination';
+import { point } from '@turf/helpers';
 
 export interface StormMotion {
   origin_lat: number;
@@ -139,7 +140,7 @@ export function buildMotionFeatures(
     // to the origin, which is fine — turf.destination handles distance=0 by
     // returning the input point.
     const distance45Km = speed_kt * 0.75 * KM_PER_NM;
-    const terminus45 = turf.destination(turf.point(originCoord), distance45Km, forwardBearing, {
+    const terminus45 = destination(point(originCoord), distance45Km, forwardBearing, {
       units: 'kilometers',
     });
     const terminus45Coords = terminus45.geometry.coordinates as [number, number];
@@ -163,7 +164,7 @@ export function buildMotionFeatures(
     // `icon-rotate: ['get', 'bearing']`.
     for (const tick of TICK_MINUTES) {
       const tickDistanceKm = speed_kt * (tick / 60) * KM_PER_NM;
-      const tickPoint = turf.destination(turf.point(originCoord), tickDistanceKm, forwardBearing, {
+      const tickPoint = destination(point(originCoord), tickDistanceKm, forwardBearing, {
         units: 'kilometers',
       });
       features.push({

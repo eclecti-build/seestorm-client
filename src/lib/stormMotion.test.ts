@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as turf from '@turf/turf';
+import distance from '@turf/distance';
+import destination from '@turf/destination';
+import { point } from '@turf/helpers';
 import {
   buildMotionFeatures,
   ktToMph,
@@ -114,7 +116,7 @@ describe('buildMotionFeatures', () => {
     const line = fc.features.find((f) => f.properties?.kind === 'line');
     const coords = (line?.geometry as GeoJSON.LineString).coordinates;
     expect(coords).toHaveLength(2);
-    const distKm = turf.distance(turf.point(coords[0]), turf.point(coords[1]), {
+    const distKm = distance(point(coords[0]), point(coords[1]), {
       units: 'kilometers',
     });
     expect(distKm).toBeGreaterThan(41.17);
@@ -145,12 +147,10 @@ describe('buildMotionFeatures', () => {
     const tick30Pt = tick30?.geometry as GeoJSON.Point;
     const terminus = (line?.geometry as GeoJSON.LineString).coordinates[1];
 
-    const originToTick = turf.distance(
-      turf.point(originPt.coordinates),
-      turf.point(tick30Pt.coordinates),
-      { units: 'kilometers' },
-    );
-    const originToTerminus = turf.distance(turf.point(originPt.coordinates), turf.point(terminus), {
+    const originToTick = distance(point(originPt.coordinates), point(tick30Pt.coordinates), {
+      units: 'kilometers',
+    });
+    const originToTerminus = distance(point(originPt.coordinates), point(terminus), {
       units: 'kilometers',
     });
     // 30-min mark sits at 2/3 of the 45-min distance (since 30/45 = 2/3).
@@ -182,8 +182,8 @@ describe('buildMotionFeatures', () => {
     const line = fc.features.find((f) => f.properties?.kind === 'line');
     const terminus = (line?.geometry as GeoJSON.LineString).coordinates[1];
 
-    const expected = turf.destination(
-      turf.point([baseMotion.origin_lon, baseMotion.origin_lat]),
+    const expected = destination(
+      point([baseMotion.origin_lon, baseMotion.origin_lat]),
       30 * 0.75 * 1.852,
       90, // forward bearing when direction_deg=270
       { units: 'kilometers' },
@@ -212,7 +212,7 @@ describe('buildMotionFeatures', () => {
     // turf.destination(p, 0, bearing) returns p; both line endpoints collapse
     // onto the origin.
     expect(lineCoords[0]).toEqual(originCoords);
-    const dist = turf.distance(turf.point(lineCoords[0]), turf.point(lineCoords[1]), {
+    const dist = distance(point(lineCoords[0]), point(lineCoords[1]), {
       units: 'kilometers',
     });
     expect(dist).toBeLessThan(1e-9);

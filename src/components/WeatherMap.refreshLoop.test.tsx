@@ -208,6 +208,35 @@ describe('WeatherMap refresh-loop pattern', () => {
     });
     expect(fetchMock.mock.calls.length).toBe(callCountAfterMount);
   });
+
+  it('does not apply a worker-transformed result after the request is aborted post-fetch', async () => {
+    const controller = new AbortController();
+    let resolveTransform: (value: unknown) => void = () => {
+      throw new Error('transform promise was not created');
+    };
+    const transform = vi.fn((raw: unknown) => {
+      void raw;
+      return new Promise<unknown>((resolve) => {
+        resolveTransform = resolve;
+      });
+    });
+    const onData = vi.fn();
+
+    async function run(): Promise<void> {
+      const raw = { ok: true };
+      const parsed = await transform(raw);
+      if (controller.signal.aborted) return;
+      onData(parsed);
+    }
+
+    const pending = run();
+    await Promise.resolve();
+    controller.abort();
+    resolveTransform({ parsed: true });
+    await pending;
+
+    expect(onData).not.toHaveBeenCalled();
+  });
 });
 
 // REVIEW AMENDMENT (2026-07-08 Tier 1 plan, Task 2): pins the ungate-from-

@@ -11,7 +11,8 @@
 //     visible on the map as multi-county fills even though NWS ships them
 //     without polygon geometry.
 
-import { booleanPointInPolygon, point as turfPoint } from '@turf/turf';
+import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
+import { point as turfPoint } from '@turf/helpers';
 import type { ColorVisionMode } from './colorVisionMode';
 import { ALERT_EXPIRY_GRACE_MS } from './constants';
 
@@ -319,6 +320,25 @@ export function parseIngestSnapshot(raw: unknown): IngestSnapshot {
     alerts,
     schema_version: typeof schemaVersion === 'number' ? schemaVersion : undefined,
   };
+}
+
+/**
+ * Resolve the timestamp used to render expiry-sensitive alert views.
+ * Historical snapshots render against their own generated time; live
+ * snapshots keep the caller-provided clock.
+ */
+export function resolveViewNowMs(
+  snapshot: IngestSnapshot,
+  nowMs: number | undefined,
+  useSnapshotTimeAsNow: boolean | undefined,
+): number | undefined {
+  return useSnapshotTimeAsNow &&
+    snapshot.generated_at_ms &&
+    Number.isFinite(snapshot.generated_at_ms)
+    ? snapshot.generated_at_ms
+    : useSnapshotTimeAsNow
+      ? Date.parse(snapshot.generated_at)
+      : nowMs;
 }
 
 // Map-internal shape. `url` + `nwsId` are always present on the shape (null

@@ -4,14 +4,14 @@ import { useEffect, useMemo, useRef, useState, useCallback, startTransition } fr
 import maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import * as turf from '@turf/turf';
+import bbox from '@turf/bbox';
+import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
+import { point } from '@turf/helpers';
 import { radarTileUrl, hrrrTileUrl, HRRR_STEP_MINUTES } from '@/lib/radar';
 import { scrubberMax, clampToScrubberRange } from '@/lib/scrubber';
 import { buildMotionFeatures, setMotionVisibility } from '@/lib/stormMotion';
 import {
-  buildAlertViews,
   deriveMultiStateDisplay,
-  parseIngestSnapshot,
   colorForEvent,
   type AlertsResponse,
   type AlertTier,
@@ -21,7 +21,6 @@ import {
 import { tornadoColor } from '@/lib/tornado';
 import { buildEventColorExpression, buildTornadoColorExpression } from '@/lib/alertPaint';
 import { useColorVisionMode } from '@/lib/preferences';
-import { buildCountyLookup, type CountyLookup } from '@/lib/countyGeometry';
 import { boostBasemapContrast } from '@/lib/mapContrast';
 import { alertLayerFilter, dimIfExpired } from '@/lib/alertFilter';
 import { getUserLocation, USER_LOCATION_KEY } from '@/lib/userLocation';
@@ -29,6 +28,7 @@ import { applyGeoDefaultIfNeeded } from '@/lib/geoDefault';
 import { STATE_VIEW_ZOOM } from '@/lib/coverage';
 import { MAP_LOAD_TIMEOUT_MS, POLL_INTERVAL_MS } from '@/lib/constants';
 import { fetchJsonWithRetry, isAbortError } from '@/lib/fetchWithRetry';
+import { AlertsWorkerClient } from '@/lib/useAlertsWorker';
 import { useClockOffset } from '@/lib/useClockOffset';
 import {
   publishLiveFetchFailure,
@@ -146,17 +146,15 @@ export default function WeatherMap() {
   // would freeze the live view at the first tick — see live-mode bypass below.
   const lastRadarUrl = useRef<string | null>(null);
 
-  // County-name → polygon lookup, populated once the bundled counties
-  // GeoJSON finishes loading. Used to hydrate zone-only alerts (Tornado
-  // Watches, etc.) with synthesized geometry so they render on the map.
-  // Null until load completes — callers of buildAlertViews pass it
-  // through optionally, so pre-load snapshots still render polygon alerts.
-  const countyLookupRef = useRef<CountyLookup | null>(null);
+  // Worker client that owns the alerts parse + view-build pipeline. County
+  // lookup hydration is sent as raw GeoJSON because the lookup itself is a
+  // closure and cannot cross postMessage.
+  const alertsWorkerRef = useRef<AlertsWorkerClient | null>(null);
   // Parsed county FeatureCollection kept around for point-in-polygon
   // resolution of "which county is the user's ZIP centroid in?". Separate
-  // from countyLookupRef (which is name-keyed for area_desc hydration) —
-  // here we need the raw geometries for turf PiP. Populated by the same
-  // counties fetch that builds the lookup.
+  // from the worker's name-keyed lookup for area_desc hydration — here we
+  // need the raw geometries for turf PiP. Populated by the same counties
+  // fetch that hydrates the worker lookup.
   const countyFeaturesRef = useRef<
     GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>[] | null
   >(null);
@@ -170,8 +168,17 @@ export default function WeatherMap() {
   // Track the currently loaded county state to avoid redundant fetches.
   const loadedCountyStateRef = useRef<string | null>(null);
 
+  useEffect(() => {
+    alertsWorkerRef.current = new AlertsWorkerClient();
+    return () => {
+      alertsWorkerRef.current?.dispose();
+      alertsWorkerRef.current = null;
+    };
+  }, []);
+
   // Lazy-load county GeoJSON for a single state, updating the MapLibre
-  // source and rebuilding the county lookup for Watch polygon hydration.
+  // source and hydrating the worker's county lookup for Watch polygon
+  // hydration.
   // Passing null clears the county data (all-states view).
   const loadCountiesForState = useCallback(async (m: maplibregl.Map, usps: string | null) => {
     if (usps === loadedCountyStateRef.current) return;
@@ -181,7 +188,7 @@ export default function WeatherMap() {
       const src = m.getSource('admin-counties') as maplibregl.GeoJSONSource | undefined;
       src?.setData(EMPTY_FC);
       countyFeaturesRef.current = null;
-      countyLookupRef.current = null;
+      alertsWorkerRef.current?.sendCounties(null, null);
       showCountyLayer(m, false);
       return;
     }
@@ -205,7 +212,7 @@ export default function WeatherMap() {
         GeoJSON.Polygon | GeoJSON.MultiPolygon
       >[];
       applyUserCountyHighlightRef.current?.();
-      countyLookupRef.current = buildCountyLookup(counties);
+      alertsWorkerRef.current?.sendCounties(usps, counties);
       refreshCurrentFrameRef.current?.();
     } catch {
       if (loadedCountyStateRef.current !== usps) return;
@@ -324,7 +331,7 @@ export default function WeatherMap() {
     try {
       // turf.bbox returns [minX, minY, maxX, maxY] for 2D geometries — NWS
       // alert polygons are always 2D, so the 4-element form is safe.
-      const [minX, minY, maxX, maxY] = turf.bbox(alert.geometry);
+      const [minX, minY, maxX, maxY] = bbox(alert.geometry);
       // For a degenerate bbox (single-point alert) fitBounds would throw or
       // zoom to max — flyTo with a sane zoom keeps the UX predictable.
       if (minX === maxX && minY === maxY) {
@@ -556,7 +563,7 @@ export default function WeatherMap() {
       // Wrapped in try so a malformed feature can't blank the layer.
       for (const f of features) {
         try {
-          if (turf.booleanPointInPolygon(turf.point([userPt.lon, userPt.lat]), f)) {
+          if (booleanPointInPolygon(point([userPt.lon, userPt.lat]), f)) {
             const props = f.properties as { STATE?: string; COUNTY?: string } | null;
             if (props?.STATE && props.COUNTY) {
               mapInstance.setFilter(layerId, [
@@ -610,7 +617,19 @@ export default function WeatherMap() {
             responseServerNowMs = validateResponseServerNowMs(candidateMs);
           },
         });
-        const snapshot = parseIngestSnapshot(raw);
+        if (signal?.aborted) return;
+        const client = alertsWorkerRef.current;
+        if (!client) return;
+        const nowMs = serverNow();
+        const { snapshot, mapFeatures, listAlerts, motionAlerts } = await client.parseAndBuild(
+          raw,
+          {
+            userState: userStateRef.current ?? undefined,
+            userPoint: userPointRef.current ?? undefined,
+            nowMs,
+          },
+        );
+        if (signal?.aborted) return;
 
         // Monotonic guard: drop a response whose generated_at_ms is
         // older than the last one we actually rendered. Without this, an
@@ -635,7 +654,7 @@ export default function WeatherMap() {
         // still counts as a live-fetch failure so persistent bad payloads trip
         // the Tier 1 degraded overlay instead of leaving a silently clean-
         // looking frozen map. Fail open/over-warn, never silently freeze.
-        if (typeof incomingMs === 'number' && incomingMs > serverNow() + MAX_FUTURE_SNAPSHOT_MS) {
+        if (typeof incomingMs === 'number' && incomingMs > nowMs + MAX_FUTURE_SNAPSHOT_MS) {
           console.warn(
             `Rejected snapshot with generated_at_ms too far in the future (${incomingMs}), possible clock skew or bad data`,
           );
@@ -654,12 +673,6 @@ export default function WeatherMap() {
         publishSnapshot(snapshot.generated_at_ms ?? null, {
           isLive: true,
           responseServerNowMs,
-        });
-        const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
-          countyLookup: countyLookupRef.current ?? undefined,
-          userState: userStateRef.current ?? undefined,
-          userPoint: userPointRef.current ?? undefined,
-          nowMs: serverNow(),
         });
         lastMapFeaturesRef.current = mapFeatures;
         lastMotionAlertsRef.current = motionAlerts;
@@ -696,7 +709,18 @@ export default function WeatherMap() {
     async (ts: string, signal?: AbortSignal) => {
       try {
         const raw = await fetchJsonWithRetry(`/v1/history/${ts}`, { signal });
-        const snapshot = parseIngestSnapshot(raw);
+        if (signal?.aborted) return;
+        const client = alertsWorkerRef.current;
+        if (!client) return;
+        const { snapshot, mapFeatures, listAlerts, motionAlerts } = await client.parseAndBuild(
+          raw,
+          {
+            userState: userStateRef.current ?? undefined,
+            userPoint: userPointRef.current ?? undefined,
+            useSnapshotTimeAsNow: true,
+          },
+        );
+        if (signal?.aborted) return;
         // Historical snapshots carry intentionally old `generated_at_ms`
         // values. Feeding them into the clock-offset calibration poisons
         // `serverNow()` (Codex review, Tier 1 remediation — Fix 2) and
@@ -711,16 +735,6 @@ export default function WeatherMap() {
         // historical alert. Mirrors the historical-fetch isolation already
         // documented in snapshotStore.ts (isLive: false skips clock/staleness
         // publishing) applied to expiry instead of clock offset.
-        const historicalNowMs =
-          snapshot.generated_at_ms && Number.isFinite(snapshot.generated_at_ms)
-            ? snapshot.generated_at_ms
-            : Date.parse(snapshot.generated_at);
-        const { mapFeatures, listAlerts, motionAlerts } = buildAlertViews(snapshot, {
-          countyLookup: countyLookupRef.current ?? undefined,
-          userState: userStateRef.current ?? undefined,
-          userPoint: userPointRef.current ?? undefined,
-          nowMs: historicalNowMs,
-        });
         lastMapFeaturesRef.current = mapFeatures;
         lastMotionAlertsRef.current = motionAlerts;
         // Same rationale as fetchLive — defer the heavy state apply so the

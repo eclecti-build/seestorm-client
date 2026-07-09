@@ -27,7 +27,8 @@ import { createReadStream } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
-import * as turf from '@turf/turf';
+import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
+import { point } from '@turf/helpers';
 import * as shapefile from 'shapefile';
 
 // All FIPS state codes → USPS.
@@ -136,10 +137,10 @@ function buildCountyResolver(
   features: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon, CountyFeatureProps>[],
 ): (lat: number, lon: number) => CountyHit | null {
   return (lat, lon) => {
-    const pt = turf.point([lon, lat]);
+    const pt = point([lon, lat]);
     for (const f of features) {
       try {
-        if (turf.booleanPointInPolygon(pt, f as GeoJSON.Feature<GeoJSON.Polygon>)) {
+        if (booleanPointInPolygon(pt, f as GeoJSON.Feature<GeoJSON.Polygon>)) {
           return {
             state: FIPS_TO_USPS[f.properties.STATEFP],
             county: f.properties.NAME,
