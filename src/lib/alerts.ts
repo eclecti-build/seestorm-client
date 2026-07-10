@@ -577,10 +577,21 @@ export function isExpiredInGrace(
   return nowMs > expiresMs && nowMs - expiresMs <= graceMs;
 }
 
+/**
+ * True once an alert has expired, with no upper bound: badge, dimming, and
+ * sort demotion must remain sticky when the snapshot-anchored drop clock has
+ * not aged the alert out yet, such as during a stale live feed.
+ */
+export function isPastExpiry(expiresIso: string, nowMs: number): boolean {
+  const expiresMs = Date.parse(expiresIso);
+  if (!Number.isFinite(expiresMs)) return false;
+  return nowMs > expiresMs;
+}
+
 function byExpiryThenPriority(nowMs: number) {
   return (a: WeatherAlert, b: WeatherAlert): number => {
-    const aExpired = isExpiredInGrace(a.properties.expires, nowMs) ? 1 : 0;
-    const bExpired = isExpiredInGrace(b.properties.expires, nowMs) ? 1 : 0;
+    const aExpired = isPastExpiry(a.properties.expires, nowMs) ? 1 : 0;
+    const bExpired = isPastExpiry(b.properties.expires, nowMs) ? 1 : 0;
     if (aExpired !== bExpired) return aExpired - bExpired;
     return byPriority(a, b);
   };
@@ -767,7 +778,7 @@ export function buildAlertViews(
   const allAlerts = filteredIngest
     .map((a) => {
       const alert = ingestToWeatherAlert(a);
-      alert.properties.expired = isExpiredInGrace(a.expires_at, nowMs);
+      alert.properties.expired = isPastExpiry(a.expires_at, nowMs);
       return alert;
     })
     .sort(byExpiryThenPriority(nowMs));
