@@ -214,7 +214,6 @@ describe('WeatherMap refresh-loop pattern', () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
-      headers: new Headers(),
       json: async () => ({ raw: true }),
     });
 
@@ -236,6 +235,7 @@ describe('WeatherMap refresh-loop pattern', () => {
     // fetchJsonWithRetry, then the post-fetch abort checkpoint
     // (WeatherMap.tsx:620), then the worker parse, then the post-parse
     // abort checkpoint (WeatherMap.tsx:632) that Task 5a's fix added.
+    // Production fetchLive takes signal?: AbortSignal; this fixture requires it — the abort race under test always needs a real controller.
     async function fetchLiveShaped(signal: AbortSignal): Promise<void> {
       try {
         const raw = await fetchJsonWithRetry('/v1/active-events.json', { signal });

@@ -18,7 +18,6 @@
  * (2026-07-08 Tier 1 plan, Task 6, Step 9).
  */
 // Mirrors ChunkErrorBanner.tsx's reload-loop guard and CHUNK_ERROR_PATTERN
-// See ChunkErrorBanner.tsx's header for the accepted visual-overlap edge when a failure surfaces through both channels.
 // (src/components/ChunkErrorBanner.tsx) — both files need to share the SAME
 // reload knowledge and recognize the SAME failure signature (a failed dynamic
 // import surfacing either as a bare window error/rejection event, which
@@ -29,6 +28,7 @@
 // too — check both call sites together. The `Failed to load chunk ... from
 // module N` Turbopack phrasing is empirically confirmed by a 2026-07-09
 // Playwright run against this repo's real production build.
+// See ChunkErrorBanner.tsx's header for the accepted visual-overlap edge when a failure surfaces through both channels.
 const RELOAD_GUARD_KEY = 'seestorm:chunk-reload-at';
 const RELOAD_GUARD_WINDOW_MS = 15_000;
 
