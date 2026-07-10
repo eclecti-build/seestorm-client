@@ -12,10 +12,12 @@ import {
   groupByFamily,
   ingestToWeatherAlert,
   isExpiredInGrace,
+  isPastExpiry,
   isPastGracePeriod,
   parseIngestSnapshot,
   priorityForEvent,
   resolveAlertUrl,
+  resolveDropNowMs,
   resolveViewNowMs,
   tierForEvent,
   WARNING_COLORS,
@@ -75,7 +77,7 @@ describe('tierForEvent', () => {
   });
 });
 
-describe('isPastGracePeriod / isExpiredInGrace', () => {
+describe('isPastGracePeriod / isExpiredInGrace / isPastExpiry', () => {
   const EXPIRES = '2026-04-17T20:30:00Z';
   const EXPIRES_MS = Date.parse(EXPIRES);
 
@@ -91,6 +93,19 @@ describe('isPastGracePeriod / isExpiredInGrace', () => {
   it('isPastGracePeriod is true once the grace period has fully elapsed', () => {
     expect(isPastGracePeriod(EXPIRES, EXPIRES_MS + 16 * 60_000)).toBe(true);
     expect(isExpiredInGrace(EXPIRES, EXPIRES_MS + 16 * 60_000)).toBe(false);
+  });
+
+  it('isPastExpiry remains true far beyond the grace window', () => {
+    expect(isPastExpiry(EXPIRES, EXPIRES_MS + 1_000)).toBe(true);
+    expect(isPastExpiry(EXPIRES, EXPIRES_MS + 60 * 60_000)).toBe(true);
+  });
+
+  it('isPastExpiry is false before expiry', () => {
+    expect(isPastExpiry(EXPIRES, EXPIRES_MS - 1_000)).toBe(false);
+  });
+
+  it('isPastExpiry fails OPEN (false) on an unparseable expires timestamp', () => {
+    expect(isPastExpiry('not-a-timestamp', Date.now())).toBe(false);
   });
 
   it('both fail OPEN (false) on an unparseable expires timestamp', () => {
@@ -401,13 +416,59 @@ describe('buildAlertViews — expiry grace period', () => {
     expect(out.listAlerts[0].properties.expired).toBe(true);
   });
 
-  it('drops an alert entirely once past expires + ALERT_EXPIRY_GRACE_MS', () => {
-    const out = buildAlertViews(
-      snap([ingest({ nws_id: 'A', expires_at: new Date(NOW - 16 * 60_000).toISOString() })]),
-      { nowMs: NOW },
-    );
+  it('drops an alert entirely once past expires + ALERT_EXPIRY_GRACE_MS (snapshot clock)', () => {
+    const snapshot = snap([
+      ingest({ nws_id: 'A', expires_at: new Date(NOW - 16 * 60_000).toISOString() }),
+    ]);
+    snapshot.generated_at = new Date(NOW).toISOString();
+    snapshot.generated_at_ms = NOW;
+    const out = buildAlertViews(snapshot, { nowMs: NOW });
     expect(out.listAlerts).toHaveLength(0);
     expect(out.mapFeatures.features).toHaveLength(0);
+  });
+
+  it('keeps an expired alert visually demoted when a stale snapshot has not aged it out', () => {
+    const snapshot = snap([
+      ingest({ nws_id: 'A', expires_at: new Date(NOW - 60 * 60_000).toISOString() }),
+    ]);
+    snapshot.generated_at = new Date(NOW - 90 * 60_000).toISOString();
+    snapshot.generated_at_ms = NOW - 90 * 60_000;
+
+    const out = buildAlertViews(snapshot, { nowMs: NOW });
+
+    expect(out.listAlerts).toHaveLength(1);
+    expect(out.listAlerts[0].properties.expired).toBe(true);
+  });
+
+  it('does NOT drop a live alert when the client clock is >grace fast (fail-open, Tier 1 fast-follow)', () => {
+    // Server truth: snapshot generated 20:00Z, alert expires 20:30Z → alert is live.
+    // Client clock: 21:00Z (30+ min fast). Old behavior dropped this alert.
+    const out = buildAlertViews(
+      snap([ingest({ nws_id: 'A', expires_at: '2026-04-17T20:30:00Z' })]),
+      { nowMs: NOW },
+    );
+    expect(out.listAlerts).toHaveLength(1);
+  });
+
+  it('drops by the snapshot clock even when the client clock is slow', () => {
+    const snapshot = snap([
+      ingest({ nws_id: 'A', expires_at: new Date(NOW - 16 * 60_000).toISOString() }),
+    ]);
+    snapshot.generated_at = new Date(NOW).toISOString();
+    snapshot.generated_at_ms = NOW;
+    // Client clock 30 min SLOW — must not resurrect a server-truth-dead alert.
+    const out = buildAlertViews(snapshot, { nowMs: NOW - 30 * 60_000 });
+    expect(out.listAlerts).toHaveLength(0);
+    expect(out.mapFeatures.features).toHaveLength(0);
+  });
+
+  it('never drops when the snapshot carries no parseable generated time', () => {
+    const snapshot = snap([
+      ingest({ nws_id: 'A', expires_at: new Date(NOW - 16 * 60_000).toISOString() }),
+    ]);
+    snapshot.generated_at = 'not-a-timestamp';
+    const out = buildAlertViews(snapshot, { nowMs: NOW });
+    expect(out.listAlerts).toHaveLength(1);
   });
 
   it('does not mark a still-active alert expired', () => {
@@ -520,6 +581,24 @@ describe('resolveViewNowMs', () => {
 
   it('falls back to parsing generated_at for snapshot-time rendering', () => {
     expect(resolveViewNowMs(snap([]), FIXTURE_NOW_MS + 1_000, true)).toBe(FIXTURE_NOW_MS);
+  });
+});
+
+describe('resolveDropNowMs', () => {
+  it('prefers generated_at_ms', () => {
+    const s = snap([]);
+    s.generated_at_ms = 1234567890123;
+    expect(resolveDropNowMs(s)).toBe(1234567890123);
+  });
+
+  it('falls back to Date.parse(generated_at)', () => {
+    expect(resolveDropNowMs(snap([]))).toBe(Date.parse('2026-04-17T20:00:00Z'));
+  });
+
+  it('returns null when neither is parseable', () => {
+    const s = snap([]);
+    s.generated_at = 'not-a-timestamp';
+    expect(resolveDropNowMs(s)).toBe(null);
   });
 });
 

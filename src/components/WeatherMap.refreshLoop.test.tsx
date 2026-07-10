@@ -209,33 +209,56 @@ describe('WeatherMap refresh-loop pattern', () => {
     expect(fetchMock.mock.calls.length).toBe(callCountAfterMount);
   });
 
-  it('does not apply a worker-transformed result after the request is aborted post-fetch', async () => {
-    const controller = new AbortController();
-    let resolveTransform: (value: unknown) => void = () => {
-      throw new Error('transform promise was not created');
-    };
-    const transform = vi.fn((raw: unknown) => {
-      void raw;
-      return new Promise<unknown>((resolve) => {
-        resolveTransform = resolve;
-      });
+  it('does not apply a worker-transformed result after an abort lands mid-worker-parse (real fetchLive sequence)', async () => {
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ raw: true }),
     });
-    const onData = vi.fn();
 
-    async function run(): Promise<void> {
-      const raw = { ok: true };
-      const parsed = await transform(raw);
-      if (controller.signal.aborted) return;
-      onData(parsed);
+    let resolveParse: (value: unknown) => void = () => {
+      throw new Error('parse promise was not created');
+    };
+    // Worker-client-shaped transform: resolves only when the test says so,
+    // exactly like AlertsWorkerClient.parseAndBuild resolving after abort.
+    const parseAndBuild = vi.fn(
+      (raw: unknown) =>
+        new Promise<unknown>((resolve) => {
+          void raw;
+          resolveParse = resolve;
+        }),
+    );
+    const applyResult = vi.fn();
+
+    // Mirrors WeatherMap.fetchLive's production sequence: real
+    // fetchJsonWithRetry, then the post-fetch abort checkpoint
+    // (WeatherMap.tsx:620), then the worker parse, then the post-parse
+    // abort checkpoint (WeatherMap.tsx:632) that Task 5a's fix added.
+    // Production fetchLive takes signal?: AbortSignal; this fixture requires it — the abort race under test always needs a real controller.
+    async function fetchLiveShaped(signal: AbortSignal): Promise<void> {
+      try {
+        const raw = await fetchJsonWithRetry('/v1/active-events.json', { signal });
+        if (signal.aborted) return;
+        const parsed = await parseAndBuild(raw);
+        if (signal.aborted) return;
+        applyResult(parsed);
+      } catch (err) {
+        if (isAbortError(err)) return;
+        throw err;
+      }
     }
 
-    const pending = run();
-    await Promise.resolve();
+    const controller = new AbortController();
+    const pending = fetchLiveShaped(controller.signal);
+    // Let the fetch resolve and the worker parse begin.
+    await vi.waitFor(() => expect(parseAndBuild).toHaveBeenCalledTimes(1));
+    // Abort lands while the worker parse is in flight, then the parse resolves.
     controller.abort();
-    resolveTransform({ parsed: true });
+    resolveParse({ parsed: true });
     await pending;
 
-    expect(onData).not.toHaveBeenCalled();
+    expect(applyResult).not.toHaveBeenCalled();
   });
 });
 

@@ -20,6 +20,12 @@
  * warning. See also `src/app/error.tsx`, a companion React error boundary
  * for the case where the same failure surfaces as a render-time throw
  * instead of a bare window event.
+ * Overlap edge (final review, 2026-07-09, accepted): when one failure
+ * surfaces through BOTH channels (window event AND render throw), this
+ * fixed bottom banner renders on top of error.tsx's full-screen UI.
+ * Deliberately left as-is: both surfaces carry the same message and the
+ * same one-click reload, so the redundancy is harmless — do not add
+ * cross-component state to suppress one of them.
  */
 
 import { useEffect, useState } from 'react';

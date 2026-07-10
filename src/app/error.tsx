@@ -28,6 +28,7 @@
 // too — check both call sites together. The `Failed to load chunk ... from
 // module N` Turbopack phrasing is empirically confirmed by a 2026-07-09
 // Playwright run against this repo's real production build.
+// See ChunkErrorBanner.tsx's header for the accepted visual-overlap edge when a failure surfaces through both channels.
 const RELOAD_GUARD_KEY = 'seestorm:chunk-reload-at';
 const RELOAD_GUARD_WINDOW_MS = 15_000;
 

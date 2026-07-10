@@ -8,6 +8,12 @@ afterEach(() => {
   window.sessionStorage.removeItem(RELOAD_GUARD_KEY);
 });
 
+const originalLocation = Object.getOwnPropertyDescriptor(window, 'location');
+
+afterEach(() => {
+  if (originalLocation) Object.defineProperty(window, 'location', originalLocation);
+});
+
 describe('<Error /> (route-segment boundary)', () => {
   it('renders honest crash messaging and a weather.gov link', () => {
     render(<Error error={new globalThis.Error('boom')} reset={() => {}} />);
