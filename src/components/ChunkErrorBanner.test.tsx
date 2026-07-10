@@ -4,6 +4,7 @@ import ChunkErrorBanner from './ChunkErrorBanner';
 
 describe('ChunkErrorBanner', () => {
   let reloadSpy: ReturnType<typeof vi.fn>;
+  const originalLocation = Object.getOwnPropertyDescriptor(window, 'location');
 
   beforeEach(() => {
     reloadSpy = vi.fn();
@@ -16,6 +17,7 @@ describe('ChunkErrorBanner', () => {
   });
 
   afterEach(() => {
+    if (originalLocation) Object.defineProperty(window, 'location', originalLocation);
     cleanup();
   });
 

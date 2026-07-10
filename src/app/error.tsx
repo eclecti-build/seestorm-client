@@ -18,6 +18,7 @@
  * (2026-07-08 Tier 1 plan, Task 6, Step 9).
  */
 // Mirrors ChunkErrorBanner.tsx's reload-loop guard and CHUNK_ERROR_PATTERN
+// See ChunkErrorBanner.tsx's header for the accepted visual-overlap edge when a failure surfaces through both channels.
 // (src/components/ChunkErrorBanner.tsx) — both files need to share the SAME
 // reload knowledge and recognize the SAME failure signature (a failed dynamic
 // import surfacing either as a bare window error/rejection event, which
