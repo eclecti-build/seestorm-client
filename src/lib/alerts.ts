@@ -341,6 +341,32 @@ export function resolveViewNowMs(
       : nowMs;
 }
 
+/**
+ * Server-anchored clock for the expiry-DROP decision in `buildAlertViews`.
+ *
+ * Dropping an alert is irreversible for the user (it vanishes from map and
+ * panel), so the clock it's judged against must not be influenced by the
+ * client's wall clock: a >grace-period-fast local clock would otherwise
+ * silently remove LIVE alerts whenever clock calibration is unavailable
+ * (payloads without `generated_at_ms`, or the first fetch of a session
+ * before `useClockOffset` has calibrated) — the Tier 1 fast-follow.
+ * The snapshot's own generated time is server truth and is always ≤ the
+ * true current time, so judging `expires + grace` against it can only drop
+ * LATE (by cache age + poll interval, ≪ the 15-min grace), never early.
+ * Returns `null` when the snapshot carries no parseable time at all —
+ * callers must then fail open and not drop. The cosmetic dim/badge path
+ * (`isExpiredInGrace`) deliberately stays on the caller's `nowMs`: a wrong
+ * badge is recoverable, a wrong drop is not.
+ */
+export function resolveDropNowMs(snapshot: IngestSnapshot): number | null {
+  const genMs = snapshot.generated_at_ms;
+  if (typeof genMs === 'number' && Number.isFinite(genMs) && genMs > 0) {
+    return genMs;
+  }
+  const parsed = Date.parse(snapshot.generated_at);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 // Map-internal shape. `url` + `nwsId` are always present on the shape (null
 // when we have nothing to point at) so downstream code can do a single
 // nullish check instead of switching on schema version.
@@ -725,6 +751,8 @@ export function buildAlertViews(
   const resolvedAllowed: readonly string[] | undefined =
     allowedStates ?? (snapshot.areas.length > 0 ? snapshot.areas : undefined);
 
+  const dropNowMs = resolveDropNowMs(snapshot);
+
   // Filter precedence: userPoint (precise, ZIP-derived) wins over userState
   // (coarse, picker-derived). Both are optional — when neither is set,
   // every alert in the snapshot is included.
@@ -734,7 +762,7 @@ export function buildAlertViews(
       : userState
         ? snapshot.alerts.filter((a) => alertTouchesState(a, userState))
         : snapshot.alerts
-  ).filter((a) => !isPastGracePeriod(a.expires_at, nowMs));
+  ).filter((a) => dropNowMs === null || !isPastGracePeriod(a.expires_at, dropNowMs));
 
   const allAlerts = filteredIngest
     .map((a) => {
