@@ -33,6 +33,9 @@
     "deploy:preview": "wrangler versions upload",
     "cf:dev": "wrangler dev"
   },
+  "overrides": {
+    "postcss": "^8.5.10"
+  },
   "dependencies": {
     "@turf/bbox": "^7.3.4",
     "@turf/boolean-point-in-polygon": "^7.3.4",
@@ -41,12 +44,12 @@
     "@vis.gl/react-maplibre": "^8.1.1",
     "lucide-react": "^1.17.0",
     "maplibre-gl": "^5.23.0",
-    "next": "16.2.4",
+    "next": "16.2.10",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260417.1",
+    "@cloudflare/workers-types": "^5.20260711.1",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -58,13 +61,13 @@
     "@types/shapefile": "^0.6.4",
     "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^9",
-    "eslint-config-next": "16.2.4",
+    "eslint-config-next": "16.2.10",
     "jsdom": "^25.0.1",
     "prettier": "^3.8.3",
     "shapefile": "^0.6.6",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3.2.4",
-    "wrangler": "^4.83.0"
+    "wrangler": "^4.110.0"
   }
 }
