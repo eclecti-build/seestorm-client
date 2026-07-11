@@ -55,7 +55,7 @@
     "@testing-library/react": "^16.3.2",
     "@turf/distance": "^7.3.4",
     "@types/geojson": "^7946.0.16",
-    "@types/node": "^22",
+    "@types/node": "^25",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/shapefile": "^0.6.4",
