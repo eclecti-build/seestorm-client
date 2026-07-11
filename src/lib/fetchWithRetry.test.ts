@@ -32,7 +32,7 @@ describe('fetchJsonWithRetry', () => {
       status: 200,
       json: async () => ({ hello: 'world' }),
     });
-    const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+    const sleep = vi.fn((): Promise<void> => Promise.resolve());
     const result = await fetchJsonWithRetry('/x', { sleep });
     expect(result).toEqual({ hello: 'world' });
     // No retry → no sleep call.
@@ -47,7 +47,9 @@ describe('fetchJsonWithRetry', () => {
       .mockRejectedValueOnce(new Error('boom 2'))
       .mockRejectedValueOnce(new Error('boom 3'));
 
-    const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+    const sleep = vi.fn<(ms: number, signal?: AbortSignal) => Promise<void>>(
+      (): Promise<void> => Promise.resolve(),
+    );
     await expect(fetchJsonWithRetry('/x', { sleep })).rejects.toBeInstanceOf(FetchRetryError);
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -65,7 +67,7 @@ describe('fetchJsonWithRetry', () => {
       .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: true }) });
 
-    const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+    const sleep = vi.fn((): Promise<void> => Promise.resolve());
     const result = await fetchJsonWithRetry('/x', { sleep });
     expect(result).toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -82,7 +84,9 @@ describe('fetchJsonWithRetry', () => {
       .mockRejectedValueOnce(new Error('c'))
       .mockRejectedValueOnce(new Error('d'));
 
-    const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+    const sleep = vi.fn<(ms: number, signal?: AbortSignal) => Promise<void>>(
+      (): Promise<void> => Promise.resolve(),
+    );
     await expect(fetchJsonWithRetry('/x', { sleep, maxAttempts: 4 })).rejects.toBeInstanceOf(
       FetchRetryError,
     );
@@ -105,7 +109,7 @@ describe('fetchJsonWithRetry', () => {
         }),
     );
 
-    const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+    const sleep = vi.fn((): Promise<void> => Promise.resolve());
     const p = fetchJsonWithRetry('/x', { signal: controller.signal, sleep });
     controller.abort();
 
@@ -127,7 +131,7 @@ describe('fetchJsonWithRetry', () => {
       .mockRejectedValueOnce(new TypeError('network ded'))
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ n: 1 }) });
 
-    const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+    const sleep = vi.fn((): Promise<void> => Promise.resolve());
     const result = await fetchJsonWithRetry('/x', { sleep });
     expect(result).toEqual({ n: 1 });
     expect(sleep).toHaveBeenCalledTimes(1);
@@ -142,7 +146,7 @@ describe('fetchJsonWithRetry', () => {
       json: async () => ({ hello: 'world' }),
     });
     const onResponse = vi.fn();
-    const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+    const sleep = vi.fn((): Promise<void> => Promise.resolve());
     const result = await fetchJsonWithRetry('/x', { sleep, onResponse });
     expect(result).toEqual({ hello: 'world' });
     expect(onResponse).toHaveBeenCalledTimes(1);
@@ -163,7 +167,7 @@ describe('fetchJsonWithRetry', () => {
 
     await expect(
       fetchJsonWithRetry('/x', {
-        sleep: vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve()),
+        sleep: vi.fn((): Promise<void> => Promise.resolve()),
         onResponse: () => {
           throw new Error('boom');
         },
@@ -203,7 +207,7 @@ describe('fetchJsonWithRetry', () => {
         .mockImplementationOnce(hangingImpl)
         .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: true }) });
 
-      const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+      const sleep = vi.fn((): Promise<void> => Promise.resolve());
       const p = fetchJsonWithRetry('/x', { sleep, timeoutMs: 5_000 });
 
       // Advance past the first two per-attempt timeouts. Each timeout
@@ -232,7 +236,7 @@ describe('fetchJsonWithRetry', () => {
         });
       fetchMock.mockImplementation(hangingImpl);
 
-      const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+      const sleep = vi.fn((): Promise<void> => Promise.resolve());
       const p = fetchJsonWithRetry('/x', { sleep, timeoutMs: 1_000 });
       // Swallow rejection at the mocked-promise layer so Node doesn't flag
       // an unhandled rejection while we're driving fake timers.
@@ -259,7 +263,7 @@ describe('fetchJsonWithRetry', () => {
         });
       });
 
-      const sleep = vi.fn((_ms: number, _signal?: AbortSignal): Promise<void> => Promise.resolve());
+      const sleep = vi.fn((): Promise<void> => Promise.resolve());
       const p = fetchJsonWithRetry('/x', {
         signal: controller.signal,
         sleep,

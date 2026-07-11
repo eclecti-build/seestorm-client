@@ -403,7 +403,6 @@ export default function WeatherMap() {
   useEffect(() => {
     const loc = getUserLocation();
     if (loc) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR hydration from localStorage
       setUserStateLocal(loc.state);
       return;
     }
@@ -828,7 +827,6 @@ export default function WeatherMap() {
     const { signal } = controller;
 
     void fetchLive(signal);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch; setState post-await
     void fetchHistory(signal);
 
     const interval = setInterval(() => {
