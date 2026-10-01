@@ -1,6 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, useCallback, startTransition } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  useCallback,
+  startTransition,
+} from 'react';
 import maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -31,6 +39,14 @@ import { fetchJsonWithRetry, isAbortError } from '@/lib/fetchWithRetry';
 import { AlertsWorkerClient } from '@/lib/useAlertsWorker';
 import { useClockOffset } from '@/lib/useClockOffset';
 import {
+  INITIAL_RADAR_STATUS,
+  nextRadarDeadline,
+  radarIndicator,
+  radarSourceIdOf,
+  radarStatusReducer,
+  shouldRestartLiveRefresh,
+} from '@/lib/radarStatus';
+import {
   publishLiveFetchFailure,
   publishSnapshot,
   validateResponseServerNowMs,
@@ -38,6 +54,7 @@ import {
 import AlertsPanel from './AlertsPanel';
 import LocationChip from './LocationChip';
 import MapLegend from './MapLegend';
+import RadarStatusIndicator from './RadarStatusIndicator';
 
 // Continental US default extent — covers all 50 states at a glance.
 const US_CENTER: [number, number] = [-98, 39];
@@ -117,6 +134,20 @@ interface HistoryResponse {
 // only one state's features, so no FIPS filter is needed on the layer.
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
+// Flip the A/B radar layers: the incoming layer fades in, the current fades
+// out. MapLibre animates both over CROSSFADE_MS thanks to the
+// `raster-opacity-transition` set at layer creation.
+//
+// Critical: the "restore" side sets the full zoom-interpolation expression,
+// NOT a scalar. Passing a scalar here would clobber the zoom ramp the first
+// time the user steps the slider, leaving the radar stuck at whatever
+// opacity we happened to pick. The "inactive" side still goes to scalar 0 —
+// fully transparent is opacity-value-independent of zoom.
+function crossfadeRadar(m: maplibregl.Map, currentLayerId: string, incomingLayerId: string): void {
+  m.setPaintProperty(incomingLayerId, 'raster-opacity', RADAR_OPACITY_EXPR);
+  m.setPaintProperty(currentLayerId, 'raster-opacity', 0);
+}
+
 function showCountyLayer(m: maplibregl.Map, visible: boolean): void {
   if (m.getLayer('admin-counties-line')) {
     m.setLayoutProperty('admin-counties-line', 'visibility', visible ? 'visible' : 'none');
@@ -145,6 +176,18 @@ export default function WeatherMap() {
   // `setTiles` to invalidate the source's tile pyramid. Deduping live URLs
   // would freeze the live view at the first tick — see live-mode bypass below.
   const lastRadarUrl = useRef<string | null>(null);
+  // In-flight gated live refresh (see the radar effect): which hidden source
+  // it is loading, when it started, and how to tear down its listeners.
+  const pendingLiveRefresh = useRef<{
+    sourceId: string;
+    startedAt: number;
+    cancel: () => void;
+  } | null>(null);
+  // Radar status indicator. MapLibre events feed the pure reducer in
+  // lib/radarStatus.ts; `radarNow` is bumped by a timer when the loading
+  // grace period elapses so the selector can re-evaluate.
+  const [radarStatus, dispatchRadarStatus] = useReducer(radarStatusReducer, INITIAL_RADAR_STATUS);
+  const [radarNow, setRadarNow] = useState(0);
 
   // Worker client that owns the alerts parse + view-build pipeline. County
   // lookup hydration is sent as raw GeoJSON because the lookup itself is a
@@ -933,6 +976,15 @@ export default function WeatherMap() {
     if (!mapReady || !map.current) return;
     const m = map.current;
 
+    // Leaving live mode abandons any gated live refresh: the frame shown must
+    // now match the timestamp on the slider, not a late live swap. Dispatched
+    // even with nothing pending: an error-cancelled refresh leaves its clock
+    // running until live mode is left or a later refresh succeeds.
+    if (!isLive) {
+      pendingLiveRefresh.current?.cancel();
+      dispatchRadarStatus({ type: 'refreshAbandoned' });
+    }
+
     let url: string;
     if (isForecast) {
       url = hrrrTileUrl(forecastOffsetMin);
@@ -958,7 +1010,16 @@ export default function WeatherMap() {
     // radar. Deduping it would freeze the live view at whatever tile content
     // landed on the first paint.
     if (!isLive && url === lastRadarUrl.current) return;
+    // Live → live (the constant live URL was already showing): a refresh of
+    // the same view, gated below so a failing tile host can't wipe it.
+    const liveRefresh = isLive && url === lastRadarUrl.current;
     lastRadarUrl.current = url;
+
+    // A live refresh still loading is left alone — restarting it every poll
+    // would mean a slow host never finishes. Only a stale one is replaced.
+    const pending = pendingLiveRefresh.current;
+    if (liveRefresh && pending && !shouldRestartLiveRefresh(pending.startedAt, Date.now())) return;
+    pending?.cancel();
 
     const current = activeRadar.current;
     const incoming = current === 'a' ? 'b' : 'a';
@@ -968,22 +1029,83 @@ export default function WeatherMap() {
     const incomingSource = m.getSource(incomingLayerId) as maplibregl.RasterTileSource | undefined;
     if (!incomingSource) return;
 
+    if (liveRefresh) {
+      // Keep the last good live frame: load the refresh into the hidden layer
+      // and only swap once that source has loaded with ZERO tile errors. Any
+      // tile error abandons the swap — the current frame stays lit and the
+      // next poll retries. (`isSourceLoaded` counts errored tiles as loaded,
+      // so errors are tracked separately via the map `error` event.)
+      //
+      // `contentSeen` guards a MapLibre ordering quirk: after setTiles the
+      // source first fires a `metadata` sourcedata event while the old tiles
+      // still read as loaded; the reload only begins at the `content` event.
+      //
+      // `tilesLoaded` guards HTTP 404s: MapLibre fires no `error` for them yet
+      // counts them as settled, so an all-404 refresh would swap a blank frame
+      // in. Each successful tile load fires a source `data` event carrying
+      // `tile`; at least one is required. With none, the gate stays pending —
+      // the refresh-grace dots surface it and the 60s restart retries.
+      let contentSeen = false;
+      let tilesLoaded = 0;
+      const cancel = () => {
+        m.off('sourcedata', onSourceData);
+        m.off('idle', trySwap);
+        m.off('error', onError);
+        if (pendingLiveRefresh.current?.cancel === cancel) pendingLiveRefresh.current = null;
+      };
+      function trySwap() {
+        if (!contentSeen || tilesLoaded === 0 || !m.isSourceLoaded(incomingLayerId)) return;
+        cancel();
+        crossfadeRadar(m, currentLayerId, incomingLayerId);
+        activeRadar.current = incoming;
+        dispatchRadarStatus({ type: 'refreshSucceeded' });
+      }
+      function onSourceData(e: maplibregl.MapSourceDataEvent) {
+        if (e.sourceId !== incomingLayerId) return;
+        if (e.sourceDataType === 'content') contentSeen = true;
+        if (contentSeen && e.tile) tilesLoaded += 1;
+        trySwap();
+      }
+      function onError(e: object) {
+        if (radarSourceIdOf(e) === incomingLayerId) cancel();
+      }
+      const startedAt = Date.now();
+      pendingLiveRefresh.current = { sourceId: incomingLayerId, startedAt, cancel };
+      dispatchRadarStatus({ type: 'refreshStarted', at: startedAt });
+      m.on('sourcedata', onSourceData);
+      // Backstop: a final tile that settles without a sourcedata event (e.g.
+      // a 404 among good tiles) still lets the map go idle.
+      m.on('idle', trySwap);
+      m.on('error', onError);
+      incomingSource.setTiles([url]);
+      return;
+    }
+
     // Start loading the next frame's tiles into the inactive (invisible) layer.
     incomingSource.setTiles([url]);
 
-    // Crossfade — MapLibre animates these paint properties over CROSSFADE_MS
-    // thanks to the `raster-opacity-transition` we set at layer creation.
-    //
-    // Critical: the "restore" side sets the full zoom-interpolation expression,
-    // NOT a scalar. Passing a scalar here would clobber the zoom ramp the first
-    // time the user steps the slider, leaving the radar stuck at whatever
-    // opacity we happened to pick. The "inactive" side still goes to scalar 0 —
-    // fully transparent is opacity-value-independent of zoom.
-    m.setPaintProperty(incomingLayerId, 'raster-opacity', RADAR_OPACITY_EXPR);
-    m.setPaintProperty(currentLayerId, 'raster-opacity', 0);
+    // Crossfade immediately — in historical/forecast mode (and on entering
+    // live) the frame must match the timestamp shown, so no gating here.
+    crossfadeRadar(m, currentLayerId, incomingLayerId);
 
     activeRadar.current = incoming;
+    // The newly on-screen source is now loading its frame: a fresh error
+    // cycle, so an unsettled error on the previous frame doesn't stick.
+    dispatchRadarStatus({ type: 'frameChanged', at: Date.now() });
   }, [mapReady, isLive, isForecast, forecastOffsetMin, sliderValue, history]);
+
+  // Unmount cancels any gated live refresh and removes its listeners.
+  useEffect(() => () => pendingLiveRefresh.current?.cancel(), []);
+
+  // Wake the radar indicator selector when a grace period (on-screen load or
+  // gated refresh) elapses. Re-runs after each wake, so the later of the two
+  // deadlines is scheduled once the earlier has been seen.
+  useEffect(() => {
+    const deadline = nextRadarDeadline(radarStatus, radarNow);
+    if (deadline === null) return;
+    const id = setTimeout(() => setRadarNow(Date.now()), Math.max(0, deadline - Date.now()));
+    return () => clearTimeout(id);
+  }, [radarStatus, radarNow]);
 
   // Observation-layer visibility (alert polygons + storm-motion vectors).
   // Kept separate from the radar-frame effect so a legend tier toggle
@@ -1211,7 +1333,40 @@ export default function WeatherMap() {
       if (!mapLoaded) {
         setMapLoadFailed(true);
       }
+      // Radar tile failures surface through the status indicator instead.
+      // Attributed via the event's `sourceId`; only the on-screen source and
+      // an in-flight gated live refresh count — a stale hidden layer's
+      // failures aren't what the user is looking at.
+      const radarId = radarSourceIdOf(e);
+      if (
+        radarId &&
+        (radarId === `radar-${activeRadar.current}` ||
+          radarId === pendingLiveRefresh.current?.sourceId)
+      ) {
+        dispatchRadarStatus({ type: 'tileErrored' });
+      }
     });
+
+    // Radar loading status for the on-screen source. `sourcedataloading`
+    // fires per tile request (and on setTiles) → load started; the load has
+    // settled once the source reports loaded on a later `sourcedata` (the
+    // `metadata` one is skipped — it fires before a setTiles reload begins,
+    // while the old tiles still read as loaded) or when the map goes `idle`
+    // (backstop for aborted tiles that never emit a completion event).
+    const activeRadarId = () => `radar-${activeRadar.current}`;
+    const settleRadarStatus = () => {
+      const id = activeRadarId();
+      if (m.getSource(id) && m.isSourceLoaded(id)) dispatchRadarStatus({ type: 'loadSettled' });
+    };
+    m.on('sourcedataloading', (e) => {
+      if (e.sourceId === activeRadarId()) {
+        dispatchRadarStatus({ type: 'loadStarted', at: Date.now() });
+      }
+    });
+    m.on('sourcedata', (e) => {
+      if (e.sourceId === activeRadarId() && e.sourceDataType !== 'metadata') settleRadarStatus();
+    });
+    m.on('idle', settleRadarStatus);
 
     m.on('load', () => {
       mapLoaded = true;
@@ -2125,6 +2280,9 @@ export default function WeatherMap() {
 
       {/* Time slider + status bar */}
       <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/60 to-transparent p-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))] pointer-events-none">
+        {/* Radar status dots — anchored just above this bar (bottom-full),
+            which already pads for the bottom safe-area inset. */}
+        <RadarStatusIndicator state={radarIndicator(radarStatus, radarNow)} />
         <div className="max-w-4xl mx-auto space-y-2 pointer-events-auto">
           {history.length > 0 && (
             <>

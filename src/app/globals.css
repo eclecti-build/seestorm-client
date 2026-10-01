@@ -185,6 +185,43 @@ body.ss-scroll {
   }
 }
 
+/* Radar status indicator: three light dots pulsing in a staggered wave while
+ * radar is slow or retrying. Neutral light colour on a dark pill — the cue is
+ * the dots' presence and motion, never hue. */
+@keyframes ss-radar-dot-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.ss-radar-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: var(--ss-ink);
+  animation: ss-radar-dot-pulse 1.2s ease-in-out infinite;
+}
+.ss-radar-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.ss-radar-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Reduced-motion: three static dots, still visible so the status reads. */
+@media (prefers-reduced-motion: reduce) {
+  .ss-radar-dot {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
 /* Keep MapLibre's default top-anchored controls (zoom/compass) out from
  * under the iOS status bar / Android camera cutout when viewportFit=cover. */
 .maplibregl-ctrl-top-left,
