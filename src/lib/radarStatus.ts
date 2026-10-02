@@ -100,8 +100,19 @@ export function radarStatusReducer(
       if (state.refreshSince !== null) return state;
       return { ...state, refreshSince: action.at };
     case 'refreshSucceeded':
-      if (!state.errored && state.refreshSince === null) return state;
-      return { ...state, errored: false, refreshSince: null };
+      // The swapped-in source was just verified fully loaded with no tile
+      // errors, so it also closes any on-screen load cycle: the old source may
+      // still hold hung requests that keep `idle` from ever settling it.
+      if (!state.errored && state.refreshSince === null && state.loadingSince === null) {
+        return state;
+      }
+      return {
+        ...state,
+        errored: false,
+        loadErrored: false,
+        loadingSince: null,
+        refreshSince: null,
+      };
     case 'refreshAbandoned':
       if (state.refreshSince === null) return state;
       return { ...state, refreshSince: null };

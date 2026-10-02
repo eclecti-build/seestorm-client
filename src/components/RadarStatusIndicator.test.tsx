@@ -3,27 +3,45 @@ import { render, screen } from '@testing-library/react';
 import RadarStatusIndicator from './RadarStatusIndicator';
 
 describe('RadarStatusIndicator', () => {
-  it('renders nothing when radar is healthy', () => {
-    const { container } = render(<RadarStatusIndicator state={null} />);
-    expect(container).toBeEmptyDOMElement();
+  it('shows nothing when radar is healthy but keeps an empty live region mounted', () => {
+    render(<RadarStatusIndicator state={null} />);
+    expect(screen.queryByTestId('radar-status')).toBeNull();
+    const live = screen.getByRole('status');
+    expect(live).toHaveAttribute('aria-live', 'polite');
+    expect(live).toHaveClass('sr-only');
+    expect(live).toBeEmptyDOMElement();
+  });
+
+  it('announces by changing the text of the same live region node', () => {
+    const { rerender } = render(<RadarStatusIndicator state={null} />);
+    const live = screen.getByRole('status');
+    rerender(<RadarStatusIndicator state="loading" />);
+    expect(screen.getByRole('status')).toBe(live);
+    expect(live).toHaveTextContent('Radar loading');
+    rerender(<RadarStatusIndicator state="error" />);
+    expect(screen.getByRole('status')).toBe(live);
+    expect(live).toHaveTextContent('Radar delayed, retrying');
+    rerender(<RadarStatusIndicator state={null} />);
+    expect(screen.getByRole('status')).toBe(live);
+    expect(live).toBeEmptyDOMElement();
     expect(screen.queryByTestId('radar-status')).toBeNull();
   });
 
-  it('announces loading politely with a visible label saying what is loading', () => {
+  it('shows a visible loading label that is hidden from AT so it is not read twice', () => {
     render(<RadarStatusIndicator state="loading" />);
-    const el = screen.getByRole('status');
-    expect(el).toHaveAttribute('data-testid', 'radar-status');
+    const el = screen.getByTestId('radar-status');
     expect(el).toHaveAttribute('data-state', 'loading');
-    expect(el).toHaveAttribute('aria-live', 'polite');
+    expect(el).toHaveAttribute('aria-hidden', 'true');
     expect(el).toHaveTextContent('Radar loading');
-    expect(screen.getByText('Radar loading')).not.toHaveClass('sr-only');
+    expect(el).not.toHaveClass('sr-only');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 
   it('labels the error case with its own visible text and data-state', () => {
     render(<RadarStatusIndicator state="error" />);
     const el = screen.getByTestId('radar-status');
     expect(el).toHaveAttribute('data-state', 'error');
-    expect(screen.getByText('Radar delayed, retrying')).not.toHaveClass('sr-only');
+    expect(el).toHaveTextContent('Radar delayed, retrying');
   });
 
   it('renders exactly three decorative dots and never takes pointer events', () => {

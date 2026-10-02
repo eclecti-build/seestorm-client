@@ -174,6 +174,19 @@ describe('gated live refresh (hung host surfaces as dots)', () => {
     expect(radarIndicator(s, 10_000)).toBeNull();
   });
 
+  it('a refresh swapped in after a hung on-screen load closes that load cycle', () => {
+    // Host hangs while the on-screen source loads; it recovers and the hidden
+    // refresh swaps in. The old source's hung requests mean no settle arrives.
+    const s = run([
+      { type: 'loadStarted', at: 0 },
+      { type: 'refreshStarted', at: 30_000 },
+      { type: 'refreshSucceeded' },
+    ]);
+    expect(s.loadingSince).toBeNull();
+    expect(radarIndicator(s, 31_000)).toBeNull();
+    expect(nextRadarDeadline(s, 31_000)).toBeNull();
+  });
+
   it('error takes precedence over a slow refresh', () => {
     const s = run([{ type: 'refreshStarted', at: 0 }, { type: 'tileErrored' }]);
     expect(radarIndicator(s, 0)).toBe('error');
