@@ -27,17 +27,18 @@ export const RADAR_LOADING_GRACE_MS = 600;
 
 // How long a gated live refresh may run before the dots appear. Longer than
 // the on-screen grace on purpose: the radar on screen is still good during a
-// refresh, and a slow phone connection must not flash dots every live poll.
+// refresh, and a slow phone connection must not flash dots every live refresh tick.
 // It exists so a hung host (connection accepted, never answered) surfaces
 // instead of the on-screen radar silently going stale under a LIVE label.
 export const RADAR_REFRESH_GRACE_MS = 5_000;
 
-// A gated live refresh still in flight is left alone by the next live poll
-// (restarting it would mean a slow host never finishes). Only once it is this
-// old is it abandoned and a fresh one started. 1.5 cycles at POLL_INTERVAL_MS
-// sits between the first and second poll after the refresh starts: skipped at
-// the first poll, always restarted at the second, immune to timer jitter (a
-// threshold of exactly 2 cycles made the second poll a coin flip).
+// A gated live refresh still in flight is left alone by the next live refresh
+// tick (restarting it would mean a slow host never finishes). Only once it is
+// this old is it abandoned and a fresh one started. 1.5 cycles at
+// POLL_INTERVAL_MS sits between the first and second tick after the refresh
+// starts: skipped at the first tick, always restarted at the second, immune to
+// timer jitter (a threshold of exactly 2 cycles made the second tick a coin
+// flip).
 export const LIVE_REFRESH_RESTART_MS = 1.5 * POLL_INTERVAL_MS;
 
 export interface RadarStatusState {
@@ -271,7 +272,7 @@ export function refreshGateStep(
   return { gate: next, swap };
 }
 
-// Whether the next live poll may abandon an in-flight gated refresh.
+// Whether the next live refresh tick may abandon an in-flight gated refresh.
 export function shouldRestartLiveRefresh(startedAt: number, now: number): boolean {
   return now - startedAt >= LIVE_REFRESH_RESTART_MS;
 }

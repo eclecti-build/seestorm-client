@@ -1,10 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { radarTileUrl, hrrrTileUrl, HRRR_FRAME_COUNT, HRRR_STEP_MINUTES } from './radar';
+import {
+  radarTileUrl,
+  hrrrTileUrl,
+  isLiveRadarTileUrl,
+  HRRR_FRAME_COUNT,
+  HRRR_STEP_MINUTES,
+} from './radar';
 
 describe('radarTileUrl', () => {
   it('returns the live composite layer URL when passed "live"', () => {
     expect(radarTileUrl('live')).toBe(
-      'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
+      'seestorm-radar://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
     );
   });
 
@@ -12,7 +18,7 @@ describe('radarTileUrl', () => {
     // 2026-04-17 04:45:00 UTC
     const t = new Date(Date.UTC(2026, 3, 17, 4, 45, 0));
     expect(radarTileUrl(t)).toBe(
-      'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-202604170445/{z}/{x}/{y}.png',
+      'seestorm-radar://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-202604170445/{z}/{x}/{y}.png',
     );
   });
 
@@ -46,7 +52,7 @@ describe('radarTileUrl', () => {
 describe('hrrrTileUrl', () => {
   it('pads forecast minutes to 4 digits and targets the latest run', () => {
     expect(hrrrTileUrl(60)).toBe(
-      'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/hrrr::REFD-F0060-0/{z}/{x}/{y}.png',
+      'seestorm-radar://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/hrrr::REFD-F0060-0/{z}/{x}/{y}.png',
     );
     expect(hrrrTileUrl(15)).toContain('REFD-F0015-0');
     expect(hrrrTileUrl(0)).toContain('REFD-F0000-0');
@@ -66,5 +72,18 @@ describe('hrrrTileUrl', () => {
     expect(HRRR_STEP_MINUTES).toBe(15);
     expect(HRRR_FRAME_COUNT).toBeGreaterThan(0);
     expect(HRRR_FRAME_COUNT * HRRR_STEP_MINUTES).toBeLessThanOrEqual(60);
+  });
+});
+
+describe('isLiveRadarTileUrl', () => {
+  const tile = (template: string) => template.replace('{z}/{x}/{y}', '4/3/6');
+
+  it('is true for a live composite tile', () => {
+    expect(isLiveRadarTileUrl(tile(radarTileUrl('live')))).toBe(true);
+  });
+
+  it('is false for historical and HRRR forecast tiles', () => {
+    expect(isLiveRadarTileUrl(tile(radarTileUrl(new Date(Date.UTC(2026, 3, 17)))))).toBe(false);
+    expect(isLiveRadarTileUrl(tile(hrrrTileUrl(0)))).toBe(false);
   });
 });
