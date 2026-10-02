@@ -7,9 +7,10 @@ const LABELS: Record<Exclude<RadarIndicator, null>, string> = {
 
 /**
  * Three pulsing dots shown just above the time-slider bar while the radar is
- * slow to load or a tile request has failed. Deliberately wordless and
- * hue-neutral (light dots on a dark pill) — the meaning is carried by the
- * dots' presence plus visually-hidden text for screen readers, never colour.
+ * slow to load or a tile request has failed, with a short visible label
+ * saying what is being waited on — dots alone don't tell the user that it is
+ * the radar (not the whole site) that is delayed. Hue-neutral (light on a
+ * dark pill): the meaning is carried by the dots and the words, never colour.
  * Renders nothing when the radar is healthy.
  *
  * Positioned against its parent: WeatherMap mounts it inside the bottom
@@ -29,7 +30,10 @@ export default function RadarStatusIndicator({ state }: { state: RadarIndicator 
       <span className="ss-radar-dot" aria-hidden="true" />
       <span className="ss-radar-dot" aria-hidden="true" />
       <span className="ss-radar-dot" aria-hidden="true" />
-      <span className="sr-only">{LABELS[state]}</span>
+      {/* Label follows the dots so their :nth-child pulse stagger holds. */}
+      <span className="ml-1 whitespace-nowrap text-xs font-semibold text-gray-100">
+        {LABELS[state]}
+      </span>
     </div>
   );
 }
