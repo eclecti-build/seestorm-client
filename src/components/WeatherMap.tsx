@@ -1353,6 +1353,8 @@ export default function WeatherMap() {
     // `metadata` one is skipped — it fires before a setTiles reload begins,
     // while the old tiles still read as loaded) or when the map goes `idle`
     // (backstop for aborted tiles that never emit a completion event).
+    // Successful tile loads (`sourcedata` carrying `tile`) and aborts are
+    // reported first, so a settle can tell an all-404 frame from a clean one.
     const activeRadarId = () => `radar-${activeRadar.current}`;
     const settleRadarStatus = () => {
       const id = activeRadarId();
@@ -1364,7 +1366,12 @@ export default function WeatherMap() {
       }
     });
     m.on('sourcedata', (e) => {
-      if (e.sourceId === activeRadarId() && e.sourceDataType !== 'metadata') settleRadarStatus();
+      if (e.sourceId !== activeRadarId()) return;
+      if (e.tile) dispatchRadarStatus({ type: 'tileLoaded' });
+      if (e.sourceDataType !== 'metadata') settleRadarStatus();
+    });
+    m.on('sourcedataabort', (e) => {
+      if (e.sourceId === activeRadarId()) dispatchRadarStatus({ type: 'tileAborted' });
     });
     m.on('idle', settleRadarStatus);
 

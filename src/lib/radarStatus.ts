@@ -6,7 +6,10 @@
 //     a short grace period, so a blank map doesn't read as "clear skies".
 //     Healthy refreshes (~100 ms) finish inside the grace and never flash it.
 //   - "error": a radar tile request failed. Shown immediately, and cleared
-//     only once a later radar load completes with zero tile errors.
+//     only once a later radar load completes with zero tile errors. Also
+//     raised when a load settles with no tile loaded at all: MapLibre fires
+//     no `error` for an HTTP 404 yet counts the tile as settled, so an
+//     all-404 frame would otherwise clear the dots over blank radar.
 //
 // WeatherMap feeds MapLibre events in as actions; the selector takes `now`
 // so the grace period is testable without timers.
@@ -37,6 +40,12 @@ export interface RadarStatusState {
   // Whether a tile errored during the current (or most recent) load cycle.
   // A settle only clears `errored` when this is false.
   loadErrored: boolean;
+  // Whether a tile loaded successfully during the current load cycle. A
+  // healthy frame with no rain still returns transparent tiles, which count.
+  loadSucceeded: boolean;
+  // Whether a tile request was aborted (panned out of view) during the
+  // current load cycle — a settle then proves neither success nor failure.
+  loadAborted: boolean;
   // When the current gated live refresh began; null when none is in flight.
   refreshSince: number | null;
 }
@@ -48,6 +57,10 @@ export type RadarStatusAction =
   | { type: 'loadSettled' }
   // A radar tile request failed.
   | { type: 'tileErrored' }
+  // A radar tile loaded successfully.
+  | { type: 'tileLoaded' }
+  // A radar tile request was aborted before it finished.
+  | { type: 'tileAborted' }
   // The on-screen frame changed (historical/forecast step, entering live):
   // a fresh error-tracking cycle for the new frame.
   | { type: 'frameChanged'; at: number }
@@ -64,8 +77,13 @@ export const INITIAL_RADAR_STATUS: RadarStatusState = {
   loadingSince: null,
   errored: false,
   loadErrored: false,
+  loadSucceeded: false,
+  loadAborted: false,
   refreshSince: null,
 };
+
+// Per-cycle tile bookkeeping, reset whenever a load cycle opens.
+const FRESH_CYCLE = { loadErrored: false, loadSucceeded: false, loadAborted: false } as const;
 
 export function radarStatusReducer(
   state: RadarStatusState,
@@ -75,25 +93,33 @@ export function radarStatusReducer(
     case 'loadStarted':
       // Per-tile loading events stream in; only the first opens the cycle.
       if (state.loadingSince !== null) return state;
-      return { ...state, loadingSince: action.at, loadErrored: false };
-    case 'loadSettled':
+      return { ...state, ...FRESH_CYCLE, loadingSince: action.at };
+    case 'loadSettled': {
       // A settle with no open cycle (e.g. repeat completion events) proves
       // nothing about a clean load, so it never clears the error.
       if (state.loadingSince === null) return state;
-      return {
-        ...state,
-        loadingSince: null,
-        errored: state.loadErrored ? state.errored : false,
-      };
+      let errored = state.errored;
+      if (state.loadErrored) errored = true;
+      else if (state.loadSucceeded) errored = false;
+      // Nothing loaded and nothing aborted: every tile failed silently (404).
+      else if (!state.loadAborted) errored = true;
+      return { ...state, loadingSince: null, errored };
+    }
     case 'tileErrored':
       if (state.errored && state.loadErrored) return state;
       return { ...state, errored: true, loadErrored: true };
+    case 'tileLoaded':
+      if (state.loadingSince === null || state.loadSucceeded) return state;
+      return { ...state, loadSucceeded: true };
+    case 'tileAborted':
+      if (state.loadingSince === null || state.loadAborted) return state;
+      return { ...state, loadAborted: true };
     case 'frameChanged':
       // Unlike loadStarted, always opens a fresh error cycle — an error in the
       // previous frame must not stick to a new frame that loads cleanly. An
       // already-running clock is kept so fast playback against a slow host
       // still reaches the grace threshold.
-      return { ...state, loadingSince: state.loadingSince ?? action.at, loadErrored: false };
+      return { ...state, ...FRESH_CYCLE, loadingSince: state.loadingSince ?? action.at };
     case 'refreshStarted':
       // A 60s restart of a stalled refresh keeps the original clock, so the
       // dots don't blink off.
@@ -109,7 +135,7 @@ export function radarStatusReducer(
       return {
         ...state,
         errored: false,
-        loadErrored: false,
+        ...FRESH_CYCLE,
         loadingSince: null,
         refreshSince: null,
       };

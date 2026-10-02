@@ -34,7 +34,11 @@ describe('radarIndicator', () => {
   });
 
   it('never flashes for a healthy fast load', () => {
-    const s = run([{ type: 'loadStarted', at: 1000 }, { type: 'loadSettled' }]);
+    const s = run([
+      { type: 'loadStarted', at: 1000 },
+      { type: 'tileLoaded' },
+      { type: 'loadSettled' },
+    ]);
     expect(radarIndicator(s, 1000 + RADAR_LOADING_GRACE_MS * 10)).toBeNull();
   });
 
@@ -74,6 +78,7 @@ describe('radarStatusReducer', () => {
       { type: 'tileErrored' },
       { type: 'loadSettled' },
       { type: 'loadStarted', at: 5000 },
+      { type: 'tileLoaded' },
       { type: 'loadSettled' },
     ]);
     expect(s.errored).toBe(false);
@@ -107,6 +112,61 @@ describe('radarStatusReducer', () => {
       INITIAL_RADAR_STATUS,
     );
     expect(radarStatusReducer(INITIAL_RADAR_STATUS, { type: 'refreshSucceeded' })).toBe(
+      INITIAL_RADAR_STATUS,
+    );
+  });
+});
+
+describe('silent tile failures (HTTP 404 fires no error event)', () => {
+  it('a load that settles with no tile loaded surfaces as an error', () => {
+    const s = run([{ type: 'loadStarted', at: 0 }, { type: 'loadSettled' }]);
+    expect(s.errored).toBe(true);
+    expect(radarIndicator(s, 0)).toBe('error');
+  });
+
+  it('an all-404 frame change surfaces as an error', () => {
+    const s = run([{ type: 'frameChanged', at: 0 }, { type: 'loadSettled' }]);
+    expect(radarIndicator(s, 0)).toBe('error');
+  });
+
+  it('a success on the previous frame does not count for the new one', () => {
+    const s = run([
+      { type: 'frameChanged', at: 0 },
+      { type: 'tileLoaded' },
+      { type: 'frameChanged', at: 200 },
+      { type: 'loadSettled' },
+    ]);
+    expect(s.errored).toBe(true);
+  });
+
+  it('one successful tile (e.g. a transparent no-rain tile) is a clean load', () => {
+    const s = run([
+      { type: 'loadStarted', at: 0 },
+      { type: 'tileLoaded' },
+      { type: 'tileLoaded' },
+      { type: 'loadSettled' },
+    ]);
+    expect(radarIndicator(s, 10_000)).toBeNull();
+  });
+
+  it('a cycle whose only requests were aborted neither raises nor clears the error', () => {
+    const aborted: RadarStatusAction[] = [
+      { type: 'loadStarted', at: 0 },
+      { type: 'tileAborted' },
+      { type: 'loadSettled' },
+    ];
+    expect(run(aborted).errored).toBe(false);
+    expect(run([{ type: 'tileErrored' }, ...aborted]).errored).toBe(true);
+  });
+
+  it('a successful load outside an open cycle carries into nothing', () => {
+    const s = run([
+      { type: 'tileLoaded' },
+      { type: 'loadStarted', at: 0 },
+      { type: 'loadSettled' },
+    ]);
+    expect(s.errored).toBe(true);
+    expect(radarStatusReducer(INITIAL_RADAR_STATUS, { type: 'tileLoaded' })).toBe(
       INITIAL_RADAR_STATUS,
     );
   });
@@ -200,6 +260,7 @@ describe('frameChanged', () => {
       { type: 'frameChanged', at: 0 },
       { type: 'tileErrored' },
       { type: 'frameChanged', at: 200 },
+      { type: 'tileLoaded' },
       { type: 'loadSettled' },
     ]);
     expect(s.errored).toBe(false);
