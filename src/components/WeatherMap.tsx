@@ -40,11 +40,14 @@ import { AlertsWorkerClient } from '@/lib/useAlertsWorker';
 import { useClockOffset } from '@/lib/useClockOffset';
 import {
   INITIAL_RADAR_STATUS,
+  INITIAL_REFRESH_GATE,
   nextRadarDeadline,
   radarIndicator,
   radarSourceIdOf,
   radarStatusReducer,
+  refreshGateStep,
   shouldRestartLiveRefresh,
+  type RefreshGateEvent,
 } from '@/lib/radarStatus';
 import {
   publishLiveFetchFailure,
@@ -1032,30 +1035,23 @@ export default function WeatherMap() {
     if (liveRefresh) {
       // Keep the last good live frame: load the refresh into the hidden layer
       // and only swap once that source has loaded with ZERO tile `error`
-      // events (silent 404s aside — see `tilesLoaded` below). Any
+      // events and at least one successful tile (`refreshGateStep`). Any
       // tile error abandons the swap — the current frame stays lit and the
       // next poll retries. (`isSourceLoaded` counts errored tiles as loaded,
-      // so errors are tracked separately via the map `error` event.)
-      //
-      // `contentSeen` guards a MapLibre ordering quirk: after setTiles the
-      // source first fires a `metadata` sourcedata event while the old tiles
-      // still read as loaded; the reload only begins at the `content` event.
-      //
-      // `tilesLoaded` guards HTTP 404s: MapLibre fires no `error` for them yet
-      // counts them as settled, so an all-404 refresh would swap a blank frame
-      // in. Each successful tile load fires a source `data` event carrying
-      // `tile`; at least one is required. With none, the gate stays pending —
-      // the refresh-grace dots surface it and the 60s restart retries.
-      let contentSeen = false;
-      let tilesLoaded = 0;
+      // so errors are tracked separately via the map `error` event.) A
+      // refresh with no successful tile stays pending — the refresh-grace
+      // dots surface it and the 60s restart retries.
+      let gate = INITIAL_REFRESH_GATE;
       const cancel = () => {
         m.off('sourcedata', onSourceData);
-        m.off('idle', trySwap);
+        m.off('idle', onIdle);
         m.off('error', onError);
         if (pendingLiveRefresh.current?.cancel === cancel) pendingLiveRefresh.current = null;
       };
-      function trySwap() {
-        if (!contentSeen || tilesLoaded === 0 || !m.isSourceLoaded(incomingLayerId)) return;
+      function step(event: RefreshGateEvent) {
+        const result = refreshGateStep(gate, event);
+        gate = result.gate;
+        if (!result.swap) return;
         cancel();
         crossfadeRadar(m, currentLayerId, incomingLayerId);
         activeRadar.current = incoming;
@@ -1063,12 +1059,19 @@ export default function WeatherMap() {
       }
       function onSourceData(e: maplibregl.MapSourceDataEvent) {
         if (e.sourceId !== incomingLayerId) return;
-        if (e.sourceDataType === 'content') contentSeen = true;
-        if (contentSeen && e.tile) tilesLoaded += 1;
-        trySwap();
+        step({
+          type: 'sourceData',
+          sourceDataType: e.sourceDataType,
+          tile: Boolean(e.tile),
+          sourceLoaded: m.isSourceLoaded(incomingLayerId),
+        });
+      }
+      function onIdle() {
+        step({ type: 'idle', sourceLoaded: m.isSourceLoaded(incomingLayerId) });
       }
       function onError(e: object) {
         if (radarSourceIdOf(e) !== incomingLayerId) return;
+        step({ type: 'tileErrored' });
         dispatchRadarStatus({ type: 'tileErrored', refresh: true });
         cancel();
       }
@@ -1078,7 +1081,7 @@ export default function WeatherMap() {
       m.on('sourcedata', onSourceData);
       // Backstop: a final tile that settles without a sourcedata event (e.g.
       // a 404 among good tiles) still lets the map go idle.
-      m.on('idle', trySwap);
+      m.on('idle', onIdle);
       m.on('error', onError);
       incomingSource.setTiles([url]);
       return;
@@ -1353,6 +1356,8 @@ export default function WeatherMap() {
     // (backstop for aborted tiles that never emit a completion event).
     // Successful tile loads (`sourcedata` carrying `tile`) and aborts are
     // reported first, so a settle can tell an all-404 frame from a clean one.
+    // Tiles count without waiting for `content`, unlike the gated refresh:
+    // pans open cycles with no `content` event (see `RefreshGate`).
     const activeRadarId = () => `radar-${activeRadar.current}`;
     const settleRadarStatus = () => {
       const id = activeRadarId();

@@ -23,7 +23,10 @@ const UNAVAILABLE_LABEL = 'Radar unavailable for this frame';
  *
  * Positioned against its parent: WeatherMap mounts it inside the bottom
  * slider block, so `bottom-full` sits it directly above that block, which
- * already pads for the bottom safe-area inset.
+ * already pads for the bottom safe-area inset. Below `sm` it is left-aligned
+ * with the slider's inset and capped to stop 0.5rem short of MapControlStack
+ * (right 0.75rem + 2.75rem buttons), wrapping the label instead of running
+ * under those buttons; from `sm` up it is centred on one line.
  */
 export default function RadarStatusIndicator({
   state,
@@ -44,13 +47,13 @@ export default function RadarStatusIndicator({
           aria-hidden="true"
           data-testid="radar-status"
           data-state={state}
-          className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 flex items-center gap-2 rounded-full border border-gray-500/70 bg-gray-900/90 px-4 py-2.5 shadow-lg"
+          className="pointer-events-none absolute bottom-full left-[calc(1rem+env(safe-area-inset-left))] max-w-[calc(100%-5rem-env(safe-area-inset-left)-env(safe-area-inset-right))] sm:left-1/2 sm:max-w-none sm:-translate-x-1/2 mb-1 flex items-center gap-2 rounded-full border border-gray-500/70 bg-gray-900/90 px-4 py-2.5 shadow-lg"
         >
-          <span className="ss-radar-dot" />
-          <span className="ss-radar-dot" />
-          <span className="ss-radar-dot" />
+          <span className="ss-radar-dot shrink-0" />
+          <span className="ss-radar-dot shrink-0" />
+          <span className="ss-radar-dot shrink-0" />
           {/* Label follows the dots so their :nth-child pulse stagger holds. */}
-          <span className="ml-1 whitespace-nowrap text-xs font-semibold text-gray-100">
+          <span className="ml-1 text-xs font-semibold text-[var(--ss-ink)] sm:whitespace-nowrap">
             {label}
           </span>
         </div>

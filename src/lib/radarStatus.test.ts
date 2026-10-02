@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   INITIAL_RADAR_STATUS,
+  INITIAL_REFRESH_GATE,
   LIVE_REFRESH_RESTART_MS,
   RADAR_LOADING_GRACE_MS,
   RADAR_REFRESH_GRACE_MS,
@@ -8,9 +9,11 @@ import {
   radarIndicator,
   radarSourceIdOf,
   radarStatusReducer,
+  refreshGateStep,
   shouldRestartLiveRefresh,
   type RadarStatusAction,
   type RadarStatusState,
+  type RefreshGateEvent,
 } from './radarStatus';
 
 function run(actions: RadarStatusAction[], from = INITIAL_RADAR_STATUS): RadarStatusState {
@@ -330,5 +333,77 @@ describe('nextRadarDeadline', () => {
     expect(nextRadarDeadline(s, 0)).toBe(100 + RADAR_LOADING_GRACE_MS);
     expect(nextRadarDeadline(s, 100 + RADAR_LOADING_GRACE_MS)).toBe(RADAR_REFRESH_GRACE_MS);
     expect(nextRadarDeadline(s, RADAR_REFRESH_GRACE_MS)).toBeNull();
+  });
+});
+
+describe('refreshGateStep (gated live refresh swap)', () => {
+  // Steps through the events, returning the final gate and whether any step
+  // asked to swap.
+  function gateRun(events: RefreshGateEvent[]) {
+    let gate = INITIAL_REFRESH_GATE;
+    let swapped = false;
+    for (const event of events) {
+      const result = refreshGateStep(gate, event);
+      gate = result.gate;
+      swapped ||= result.swap;
+    }
+    return { gate, swapped };
+  }
+  const content = { type: 'sourceData', sourceDataType: 'content', tile: false } as const;
+  const tile = (sourceLoaded: boolean) =>
+    ({ type: 'sourceData', sourceDataType: 'content', tile: true, sourceLoaded }) as const;
+
+  it('swaps once the source settles with a tile loaded after the reload began', () => {
+    const { swapped } = gateRun([{ ...content, sourceLoaded: false }, tile(false), tile(true)]);
+    expect(swapped).toBe(true);
+  });
+
+  it('does not swap while tiles are still loading', () => {
+    expect(gateRun([{ ...content, sourceLoaded: false }, tile(false)]).swapped).toBe(false);
+  });
+
+  it('ignores old tiles that finish before the reload begins (metadata first)', () => {
+    // The old tiles still read as loaded, but nothing has reloaded yet.
+    const { gate, swapped } = gateRun([
+      { type: 'sourceData', sourceDataType: 'metadata', tile: false, sourceLoaded: true },
+      { type: 'sourceData', tile: true, sourceLoaded: true },
+      { type: 'idle', sourceLoaded: true },
+      { ...content, sourceLoaded: true },
+    ]);
+    expect(gate.tileLoaded).toBe(false);
+    expect(swapped).toBe(false);
+  });
+
+  it('never swaps an all-404 refresh (settled, no tile loaded)', () => {
+    const { swapped } = gateRun([
+      { ...content, sourceLoaded: true },
+      { type: 'idle', sourceLoaded: true },
+    ]);
+    expect(swapped).toBe(false);
+  });
+
+  it('a tile error cancels the swap even if the source later settles', () => {
+    const { gate, swapped } = gateRun([
+      { ...content, sourceLoaded: false },
+      tile(false),
+      { type: 'tileErrored' },
+      { type: 'idle', sourceLoaded: true },
+    ]);
+    expect(gate.errored).toBe(true);
+    expect(swapped).toBe(false);
+  });
+
+  it('idle is a backstop: swaps once loaded after a tile succeeded', () => {
+    const { swapped } = gateRun([
+      { ...content, sourceLoaded: false },
+      tile(false),
+      { type: 'idle', sourceLoaded: true },
+    ]);
+    expect(swapped).toBe(true);
+  });
+
+  it('returns the same gate when an event changes nothing', () => {
+    const gate = refreshGateStep(INITIAL_REFRESH_GATE, { type: 'idle', sourceLoaded: true }).gate;
+    expect(gate).toBe(INITIAL_REFRESH_GATE);
   });
 });

@@ -66,4 +66,29 @@ describe('RadarStatusIndicator', () => {
     expect(el).toHaveClass('pointer-events-none');
     expect(el).toHaveAttribute('aria-hidden', 'true');
   });
+
+  it('keeps the dots first and unshrinkable, in the same ink token as the label', () => {
+    render(<RadarStatusIndicator state="error" live={false} />);
+    const children = Array.from(screen.getByTestId('radar-status').children);
+    // The CSS :nth-child pulse stagger depends on the dots being children 1-3.
+    children.slice(0, 3).forEach((dot) => expect(dot).toHaveClass('ss-radar-dot', 'shrink-0'));
+    expect(children[3]).toHaveTextContent('Radar unavailable for this frame');
+    expect(children[3]).toHaveClass('text-[var(--ss-ink)]');
+  });
+
+  it('wraps clear of the right control stack on phones, centred on one line from sm', () => {
+    render(<RadarStatusIndicator state="error" live />);
+    const el = screen.getByTestId('radar-status');
+    // 5rem = slider left pad (1rem) + stack right offset (0.75rem) + buttons (2.75rem) + gap.
+    expect(el).toHaveClass(
+      'left-[calc(1rem+env(safe-area-inset-left))]',
+      'max-w-[calc(100%-5rem-env(safe-area-inset-left)-env(safe-area-inset-right))]',
+      'sm:left-1/2',
+      'sm:-translate-x-1/2',
+      'sm:max-w-none',
+    );
+    expect(el).not.toHaveClass('-translate-x-1/2');
+    expect(el.lastElementChild).toHaveClass('sm:whitespace-nowrap');
+    expect(el.lastElementChild).not.toHaveClass('whitespace-nowrap');
+  });
 });

@@ -191,6 +191,66 @@ export function nextRadarDeadline(state: RadarStatusState, now: number): number 
   return deadlines.length > 0 ? Math.min(...deadlines) : null;
 }
 
+// Swap gate for a gated live refresh: the refresh loads into the hidden radar
+// source and is swapped in only once that source has settled with at least
+// one successful tile and no tile `error` event. WeatherMap feeds the hidden
+// source's MapLibre events in, reading `isSourceLoaded` as `sourceLoaded`.
+//
+// Unlike the on-screen cycle above, tiles count only after the `content`
+// event. After setTiles the source first fires `metadata` while the old tiles
+// still read as loaded; the reload begins at `content`, so anything earlier
+// is the previous load and proves nothing about the refresh. The on-screen
+// path can't wait for `content`: its cycles are also opened by pans, which
+// load tiles without one — so it only skips settling on `metadata`.
+export interface RefreshGate {
+  // The reload has begun (`content` seen); earlier events are stale.
+  contentSeen: boolean;
+  // A tile loaded successfully since the reload began. Required because
+  // MapLibre fires no `error` for an HTTP 404 yet counts it as settled, so an
+  // all-404 refresh would otherwise swap a blank frame in.
+  tileLoaded: boolean;
+  // A tile request failed: this refresh never swaps.
+  errored: boolean;
+}
+
+export type RefreshGateEvent =
+  // A `sourcedata` event from the hidden source; `tile` when it carries one
+  // (a successful tile load).
+  | { type: 'sourceData'; sourceDataType?: string; tile: boolean; sourceLoaded: boolean }
+  // The map went idle — backstop for a final tile that settles without a
+  // `sourcedata` event (e.g. a 404 among good tiles).
+  | { type: 'idle'; sourceLoaded: boolean }
+  // A map `error` event attributed to the hidden source.
+  | { type: 'tileErrored' };
+
+export const INITIAL_REFRESH_GATE: RefreshGate = {
+  contentSeen: false,
+  tileLoaded: false,
+  errored: false,
+};
+
+export function refreshGateStep(
+  gate: RefreshGate,
+  event: RefreshGateEvent,
+): { gate: RefreshGate; swap: boolean } {
+  let next = gate;
+  if (event.type === 'tileErrored') next = { ...gate, errored: true };
+  else if (event.type === 'sourceData') {
+    const contentSeen = gate.contentSeen || event.sourceDataType === 'content';
+    const tileLoaded = gate.tileLoaded || (contentSeen && event.tile);
+    if (contentSeen !== gate.contentSeen || tileLoaded !== gate.tileLoaded) {
+      next = { ...gate, contentSeen, tileLoaded };
+    }
+  }
+  const swap =
+    event.type !== 'tileErrored' &&
+    event.sourceLoaded &&
+    next.contentSeen &&
+    next.tileLoaded &&
+    !next.errored;
+  return { gate: next, swap };
+}
+
 // Whether the next live poll may abandon an in-flight gated refresh.
 export function shouldRestartLiveRefresh(startedAt: number, now: number): boolean {
   return now - startedAt >= LIVE_REFRESH_RESTART_MS;
