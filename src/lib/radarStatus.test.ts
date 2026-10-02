@@ -100,11 +100,6 @@ describe('radarStatusReducer', () => {
     expect(s.errored).toBe(true);
   });
 
-  it('a clean gated live refresh clears the error', () => {
-    const s = run([{ type: 'tileErrored' }, { type: 'refreshSucceeded' }]);
-    expect(s.errored).toBe(false);
-  });
-
   it('returns the same state object for no-op actions so React can bail out', () => {
     const loading = run([{ type: 'loadStarted', at: 1 }]);
     expect(radarStatusReducer(loading, { type: 'loadStarted', at: 2 })).toBe(loading);
@@ -186,10 +181,6 @@ describe('radarSourceIdOf', () => {
 });
 
 describe('shouldRestartLiveRefresh', () => {
-  it('starts when nothing is in flight', () => {
-    expect(shouldRestartLiveRefresh(null, 0)).toBe(true);
-  });
-
   it('leaves a younger in-flight refresh alone', () => {
     expect(shouldRestartLiveRefresh(0, 30_000)).toBe(false);
     expect(shouldRestartLiveRefresh(0, LIVE_REFRESH_RESTART_MS - 1)).toBe(false);

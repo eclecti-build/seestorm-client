@@ -62,9 +62,8 @@ describe('RadarStatusIndicator', () => {
   it('renders exactly three decorative dots and never takes pointer events', () => {
     render(<RadarStatusIndicator state="loading" live />);
     const el = screen.getByTestId('radar-status');
-    const dots = el.querySelectorAll('.ss-radar-dot');
-    expect(dots).toHaveLength(3);
-    dots.forEach((d) => expect(d).toHaveAttribute('aria-hidden', 'true'));
+    expect(el.querySelectorAll('.ss-radar-dot')).toHaveLength(3);
     expect(el).toHaveClass('pointer-events-none');
+    expect(el).toHaveAttribute('aria-hidden', 'true');
   });
 });

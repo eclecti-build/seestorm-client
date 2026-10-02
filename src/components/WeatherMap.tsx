@@ -1031,7 +1031,8 @@ export default function WeatherMap() {
 
     if (liveRefresh) {
       // Keep the last good live frame: load the refresh into the hidden layer
-      // and only swap once that source has loaded with ZERO tile errors. Any
+      // and only swap once that source has loaded with ZERO tile `error`
+      // events (silent 404s aside — see `tilesLoaded` below). Any
       // tile error abandons the swap — the current frame stays lit and the
       // next poll retries. (`isSourceLoaded` counts errored tiles as loaded,
       // so errors are tracked separately via the map `error` event.)
@@ -1067,7 +1068,9 @@ export default function WeatherMap() {
         trySwap();
       }
       function onError(e: object) {
-        if (radarSourceIdOf(e) === incomingLayerId) cancel();
+        if (radarSourceIdOf(e) !== incomingLayerId) return;
+        dispatchRadarStatus({ type: 'tileErrored', refresh: true });
+        cancel();
       }
       const startedAt = Date.now();
       pendingLiveRefresh.current = { sourceId: incomingLayerId, startedAt, cancel };
@@ -1334,19 +1337,11 @@ export default function WeatherMap() {
         setMapLoadFailed(true);
       }
       // Radar tile failures surface through the status indicator instead.
-      // Attributed via the event's `sourceId`; only the on-screen source and
-      // an in-flight gated live refresh count — a stale hidden layer's
-      // failures aren't what the user is looking at.
-      const radarId = radarSourceIdOf(e);
-      if (
-        radarId &&
-        (radarId === `radar-${activeRadar.current}` ||
-          radarId === pendingLiveRefresh.current?.sourceId)
-      ) {
-        dispatchRadarStatus({
-          type: 'tileErrored',
-          refresh: radarId === pendingLiveRefresh.current?.sourceId,
-        });
+      // Attributed via the event's `sourceId`; only the on-screen source
+      // counts here — a gated live refresh reports its own errors, and a
+      // stale hidden layer's failures aren't what the user is looking at.
+      if (radarSourceIdOf(e) === `radar-${activeRadar.current}`) {
+        dispatchRadarStatus({ type: 'tileErrored' });
       }
     });
 

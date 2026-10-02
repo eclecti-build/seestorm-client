@@ -44,11 +44,11 @@ export default function RadarStatusIndicator({
           aria-hidden="true"
           data-testid="radar-status"
           data-state={state}
-          className="ss-radar-status pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 flex items-center gap-2 rounded-full border border-gray-500/70 bg-gray-900/90 px-4 py-2.5 shadow-lg"
+          className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 flex items-center gap-2 rounded-full border border-gray-500/70 bg-gray-900/90 px-4 py-2.5 shadow-lg"
         >
-          <span className="ss-radar-dot" aria-hidden="true" />
-          <span className="ss-radar-dot" aria-hidden="true" />
-          <span className="ss-radar-dot" aria-hidden="true" />
+          <span className="ss-radar-dot" />
+          <span className="ss-radar-dot" />
+          <span className="ss-radar-dot" />
           {/* Label follows the dots so their :nth-child pulse stagger holds. */}
           <span className="ml-1 whitespace-nowrap text-xs font-semibold text-gray-100">
             {label}

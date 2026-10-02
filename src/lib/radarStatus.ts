@@ -49,9 +49,9 @@ export interface RadarStatusState {
   loadAborted: boolean;
   // When the current gated live refresh began; null when none is in flight.
   refreshSince: number | null;
-  // Whether the in-flight gated live refresh hit a tile error. Unlike
-  // `errored`, a clean on-screen load (a pan) does not clear it: live radar
-  // is still failing to refresh until a later refresh succeeds.
+  // Whether a gated live refresh hit a tile error. Outlives that (cancelled)
+  // refresh: it lasts until a later refresh succeeds or live mode is left.
+  // Unlike `errored`, a clean on-screen load (a pan) does not clear it.
   refreshErrored: boolean;
 }
 
@@ -61,7 +61,8 @@ export type RadarStatusAction =
   // The on-screen radar source has no outstanding tile requests.
   | { type: 'loadSettled' }
   // A radar tile request failed; `refresh` when it was the gated live
-  // refresh's source.
+  // refresh's source (only sent while that refresh is in flight, i.e. after
+  // its `refreshStarted`).
   | { type: 'tileErrored'; refresh?: boolean }
   // A radar tile loaded successfully.
   | { type: 'tileLoaded' }
@@ -72,7 +73,8 @@ export type RadarStatusAction =
   | { type: 'frameChanged'; at: number }
   // A gated live refresh began loading into the hidden source.
   | { type: 'refreshStarted'; at: number }
-  // A gated live refresh loaded every tile cleanly and was swapped in.
+  // A gated live refresh loaded at least one tile with no tile `error` events
+  // and was swapped in.
   | { type: 'refreshSucceeded' }
   // A gated live refresh was dropped because live mode was left.
   | { type: 'refreshAbandoned' };
@@ -113,8 +115,7 @@ export function radarStatusReducer(
       return { ...state, loadingSince: null, errored };
     }
     case 'tileErrored': {
-      const refreshErrored =
-        state.refreshErrored || (action.refresh === true && state.refreshSince !== null);
+      const refreshErrored = state.refreshErrored || action.refresh === true;
       if (state.errored && state.loadErrored && refreshErrored === state.refreshErrored) {
         return state;
       }
@@ -138,9 +139,10 @@ export function radarStatusReducer(
       if (state.refreshSince !== null) return state;
       return { ...state, refreshSince: action.at };
     case 'refreshSucceeded':
-      // The swapped-in source was just verified fully loaded with no tile
-      // errors, so it also closes any on-screen load cycle: the old source may
-      // still hold hung requests that keep `idle` from ever settling it.
+      // The swapped-in source just settled with at least one tile loaded and
+      // no tile `error` events, so it also closes any on-screen load cycle: the
+      // old source may still hold hung requests that keep `idle` from ever
+      // settling it.
       if (!state.errored && state.refreshSince === null && state.loadingSince === null) {
         return state;
       }
@@ -190,6 +192,6 @@ export function nextRadarDeadline(state: RadarStatusState, now: number): number 
 }
 
 // Whether the next live poll may abandon an in-flight gated refresh.
-export function shouldRestartLiveRefresh(startedAt: number | null, now: number): boolean {
-  return startedAt === null || now - startedAt >= LIVE_REFRESH_RESTART_MS;
+export function shouldRestartLiveRefresh(startedAt: number, now: number): boolean {
+  return now - startedAt >= LIVE_REFRESH_RESTART_MS;
 }
