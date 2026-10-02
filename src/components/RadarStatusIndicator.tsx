@@ -5,7 +5,7 @@ const LABELS: Record<Exclude<RadarIndicator, null>, string> = {
   error: 'Radar delayed, retrying',
 };
 
-// Only live mode retries a failed frame (the 30s poll starts a fresh gated
+// Only live mode retries a failed frame (the live poll starts a fresh gated
 // refresh); a historical or forecast frame stays failed until it changes.
 const UNAVAILABLE_LABEL = 'Radar unavailable for this frame';
 

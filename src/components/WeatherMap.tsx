@@ -42,6 +42,7 @@ import {
   INITIAL_RADAR_STATUS,
   INITIAL_REFRESH_GATE,
   nextRadarDeadline,
+  RADAR_SOURCE_IDS,
   radarIndicator,
   radarSourceIdOf,
   radarStatusReducer,
@@ -1040,7 +1041,8 @@ export default function WeatherMap() {
       // next poll retries. (`isSourceLoaded` counts errored tiles as loaded,
       // so errors are tracked separately via the map `error` event.) A
       // refresh with no successful tile stays pending — the refresh-grace
-      // dots surface it and the 60s restart retries.
+      // dots surface it and the stalled-refresh restart
+      // (LIVE_REFRESH_RESTART_MS) retries.
       let gate = INITIAL_REFRESH_GATE;
       const cancel = () => {
         m.off('sourcedata', onSourceData);
@@ -1255,7 +1257,7 @@ export default function WeatherMap() {
     }
 
     const cb = colorVisionMode === 'cbFriendly';
-    for (const id of ['radar-a', 'radar-b']) {
+    for (const id of RADAR_SOURCE_IDS) {
       if (!m.getLayer(id)) continue;
       m.setPaintProperty(id, 'raster-hue-rotate', cb ? RADAR_CB_HUE_ROTATE : 0);
       m.setPaintProperty(id, 'raster-saturation', cb ? RADAR_CB_SATURATION : 0);
@@ -1327,6 +1329,7 @@ export default function WeatherMap() {
       }
     }, MAP_LOAD_TIMEOUT_MS);
 
+    const activeRadarId = () => `radar-${activeRadar.current}`;
     m.on('error', (e) => {
       console.error('MapLibre error:', e.error);
       // Only surface the degraded overlay for PRE-load failures. MapLibre's
@@ -1343,7 +1346,7 @@ export default function WeatherMap() {
       // Attributed via the event's `sourceId`; only the on-screen source
       // counts here — a gated live refresh reports its own errors, and a
       // stale hidden layer's failures aren't what the user is looking at.
-      if (radarSourceIdOf(e) === `radar-${activeRadar.current}`) {
+      if (radarSourceIdOf(e) === activeRadarId()) {
         dispatchRadarStatus({ type: 'tileErrored' });
       }
     });
@@ -1358,7 +1361,6 @@ export default function WeatherMap() {
     // reported first, so a settle can tell an all-404 frame from a clean one.
     // Tiles count without waiting for `content`, unlike the gated refresh:
     // pans open cycles with no `content` event (see `RefreshGate`).
-    const activeRadarId = () => `radar-${activeRadar.current}`;
     const settleRadarStatus = () => {
       const id = activeRadarId();
       if (m.getSource(id) && m.isSourceLoaded(id)) dispatchRadarStatus({ type: 'loadSettled' });
@@ -1398,32 +1400,23 @@ export default function WeatherMap() {
         tileSize: 256,
         attribution: 'NEXRAD / HRRR via Iowa Environmental Mesonet',
       };
-      m.addSource('radar-a', radarSourceOptions);
-      m.addSource('radar-b', radarSourceOptions);
-
-      m.addLayer({
-        id: 'radar-a',
-        type: 'raster',
-        source: 'radar-a',
-        paint: {
-          'raster-opacity': RADAR_OPACITY_EXPR,
-          // 300ms crossfade between layer A and B on slider change
-          'raster-opacity-transition': { duration: CROSSFADE_MS },
-          // Built-in MapLibre tile fade-in — softens intra-source pop when
-          // tiles arrive at different times during network load.
-          'raster-fade-duration': TILE_FADE_MS,
-        },
-      });
-      m.addLayer({
-        id: 'radar-b',
-        type: 'raster',
-        source: 'radar-b',
-        paint: {
-          'raster-opacity': 0,
-          'raster-opacity-transition': { duration: CROSSFADE_MS },
-          'raster-fade-duration': TILE_FADE_MS,
-        },
-      });
+      // The first source (radar-a) starts visible; the other starts hidden.
+      for (const id of RADAR_SOURCE_IDS) {
+        m.addSource(id, radarSourceOptions);
+        m.addLayer({
+          id,
+          type: 'raster',
+          source: id,
+          paint: {
+            'raster-opacity': id === RADAR_SOURCE_IDS[0] ? RADAR_OPACITY_EXPR : 0,
+            // 300ms crossfade between layer A and B on slider change
+            'raster-opacity-transition': { duration: CROSSFADE_MS },
+            // Built-in MapLibre tile fade-in — softens intra-source pop when
+            // tiles arrive at different times during network load.
+            'raster-fade-duration': TILE_FADE_MS,
+          },
+        });
+      }
 
       // Administrative boundaries — state + county lines.
       //

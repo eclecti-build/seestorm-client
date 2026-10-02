@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { POLL_INTERVAL_MS } from './constants';
 import {
   INITIAL_RADAR_STATUS,
   INITIAL_REFRESH_GATE,
@@ -185,12 +186,19 @@ describe('radarSourceIdOf', () => {
 
 describe('shouldRestartLiveRefresh', () => {
   it('leaves a younger in-flight refresh alone', () => {
-    expect(shouldRestartLiveRefresh(0, 30_000)).toBe(false);
     expect(shouldRestartLiveRefresh(0, LIVE_REFRESH_RESTART_MS - 1)).toBe(false);
   });
 
   it('restarts once the in-flight refresh is older than the limit', () => {
     expect(shouldRestartLiveRefresh(0, LIVE_REFRESH_RESTART_MS)).toBe(true);
+  });
+
+  it('skips the first poll after the refresh starts, even if it fires late', () => {
+    expect(shouldRestartLiveRefresh(0, POLL_INTERVAL_MS)).toBe(false);
+  });
+
+  it('always restarts at the second poll, even if it fires early', () => {
+    expect(shouldRestartLiveRefresh(0, 2 * POLL_INTERVAL_MS - 50)).toBe(true);
   });
 });
 
@@ -205,10 +213,10 @@ describe('gated live refresh (hung host surfaces as dots)', () => {
   it('a restart of a stalled refresh does not reset the clock', () => {
     const s = run([
       { type: 'refreshStarted', at: 0 },
-      { type: 'refreshStarted', at: 60_000 },
+      { type: 'refreshStarted', at: 2 * POLL_INTERVAL_MS },
     ]);
     expect(s.refreshSince).toBe(0);
-    expect(radarIndicator(s, 60_000)).toBe('loading');
+    expect(radarIndicator(s, 2 * POLL_INTERVAL_MS)).toBe('loading');
   });
 
   it('leaving live mode clears the refresh clock', () => {
@@ -233,12 +241,12 @@ describe('gated live refresh (hung host surfaces as dots)', () => {
     // refresh swaps in. The old source's hung requests mean no settle arrives.
     const s = run([
       { type: 'loadStarted', at: 0 },
-      { type: 'refreshStarted', at: 30_000 },
+      { type: 'refreshStarted', at: POLL_INTERVAL_MS },
       { type: 'refreshSucceeded' },
     ]);
     expect(s.loadingSince).toBeNull();
-    expect(radarIndicator(s, 31_000)).toBeNull();
-    expect(nextRadarDeadline(s, 31_000)).toBeNull();
+    expect(radarIndicator(s, POLL_INTERVAL_MS + 1_000)).toBeNull();
+    expect(nextRadarDeadline(s, POLL_INTERVAL_MS + 1_000)).toBeNull();
   });
 
   it('error takes precedence over a slow refresh', () => {

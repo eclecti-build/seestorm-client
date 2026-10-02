@@ -15,6 +15,8 @@
 // WeatherMap feeds MapLibre events in as actions; the selector takes `now`
 // so the grace period is testable without timers.
 
+import { POLL_INTERVAL_MS } from './constants';
+
 export const RADAR_SOURCE_IDS = ['radar-a', 'radar-b'] as const;
 export type RadarSourceId = (typeof RADAR_SOURCE_IDS)[number];
 
@@ -23,15 +25,18 @@ export const RADAR_LOADING_GRACE_MS = 600;
 
 // How long a gated live refresh may run before the dots appear. Longer than
 // the on-screen grace on purpose: the radar on screen is still good during a
-// refresh, and a slow phone connection must not flash dots every 30s poll.
+// refresh, and a slow phone connection must not flash dots every live poll.
 // It exists so a hung host (connection accepted, never answered) surfaces
 // instead of the on-screen radar silently going stale under a LIVE label.
 export const RADAR_REFRESH_GRACE_MS = 5_000;
 
-// A gated live refresh still in flight is left alone by the next 30s poll
+// A gated live refresh still in flight is left alone by the next live poll
 // (restarting it would mean a slow host never finishes). Only once it is this
-// old is it abandoned and a fresh one started.
-export const LIVE_REFRESH_RESTART_MS = 60_000;
+// old is it abandoned and a fresh one started. 1.5 cycles at POLL_INTERVAL_MS
+// sits between the first and second poll after the refresh starts: skipped at
+// the first poll, always restarted at the second, immune to timer jitter (a
+// threshold of exactly 2 cycles made the second poll a coin flip).
+export const LIVE_REFRESH_RESTART_MS = 1.5 * POLL_INTERVAL_MS;
 
 export interface RadarStatusState {
   // When the current on-screen load began; null when nothing is loading.
@@ -134,7 +139,7 @@ export function radarStatusReducer(
       // still reaches the grace threshold.
       return { ...state, ...FRESH_CYCLE, loadingSince: state.loadingSince ?? action.at };
     case 'refreshStarted':
-      // A 60s restart of a stalled refresh keeps the original clock, so the
+      // A restart of a stalled refresh keeps the original clock, so the
       // dots don't blink off.
       if (state.refreshSince !== null) return state;
       return { ...state, refreshSince: action.at };
