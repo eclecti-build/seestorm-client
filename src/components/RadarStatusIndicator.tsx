@@ -5,6 +5,10 @@ const LABELS: Record<Exclude<RadarIndicator, null>, string> = {
   error: 'Radar delayed, retrying',
 };
 
+// Only live mode retries a failed frame (the 30s poll starts a fresh gated
+// refresh); a historical or forecast frame stays failed until it changes.
+const UNAVAILABLE_LABEL = 'Radar unavailable for this frame';
+
 /**
  * Three pulsing dots shown just above the time-slider bar while the radar is
  * slow to load or a tile request has failed, with a short visible label
@@ -21,11 +25,19 @@ const LABELS: Record<Exclude<RadarIndicator, null>, string> = {
  * slider block, so `bottom-full` sits it directly above that block, which
  * already pads for the bottom safe-area inset.
  */
-export default function RadarStatusIndicator({ state }: { state: RadarIndicator }) {
+export default function RadarStatusIndicator({
+  state,
+  live,
+}: {
+  state: RadarIndicator;
+  live: boolean;
+}) {
+  const label =
+    state === null ? '' : state === 'error' && !live ? UNAVAILABLE_LABEL : LABELS[state];
   return (
     <>
       <span role="status" aria-live="polite" className="sr-only">
-        {state === null ? '' : LABELS[state]}
+        {label}
       </span>
       {state !== null && (
         <div
@@ -39,7 +51,7 @@ export default function RadarStatusIndicator({ state }: { state: RadarIndicator 
           <span className="ss-radar-dot" aria-hidden="true" />
           {/* Label follows the dots so their :nth-child pulse stagger holds. */}
           <span className="ml-1 whitespace-nowrap text-xs font-semibold text-gray-100">
-            {LABELS[state]}
+            {label}
           </span>
         </div>
       )}

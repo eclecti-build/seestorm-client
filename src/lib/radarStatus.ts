@@ -6,7 +6,8 @@
 //     a short grace period, so a blank map doesn't read as "clear skies".
 //     Healthy refreshes (~100 ms) finish inside the grace and never flash it.
 //   - "error": a radar tile request failed. Shown immediately, and cleared
-//     only once a later radar load completes with zero tile errors. Also
+//     only once a later radar load completes with zero tile errors — or, for
+//     a failed gated live refresh, once a later refresh succeeds. Also
 //     raised when a load settles with no tile loaded at all: MapLibre fires
 //     no `error` for an HTTP 404 yet counts the tile as settled, so an
 //     all-404 frame would otherwise clear the dots over blank radar.
@@ -48,6 +49,10 @@ export interface RadarStatusState {
   loadAborted: boolean;
   // When the current gated live refresh began; null when none is in flight.
   refreshSince: number | null;
+  // Whether the in-flight gated live refresh hit a tile error. Unlike
+  // `errored`, a clean on-screen load (a pan) does not clear it: live radar
+  // is still failing to refresh until a later refresh succeeds.
+  refreshErrored: boolean;
 }
 
 export type RadarStatusAction =
@@ -55,8 +60,9 @@ export type RadarStatusAction =
   | { type: 'loadStarted'; at: number }
   // The on-screen radar source has no outstanding tile requests.
   | { type: 'loadSettled' }
-  // A radar tile request failed.
-  | { type: 'tileErrored' }
+  // A radar tile request failed; `refresh` when it was the gated live
+  // refresh's source.
+  | { type: 'tileErrored'; refresh?: boolean }
   // A radar tile loaded successfully.
   | { type: 'tileLoaded' }
   // A radar tile request was aborted before it finished.
@@ -80,6 +86,7 @@ export const INITIAL_RADAR_STATUS: RadarStatusState = {
   loadSucceeded: false,
   loadAborted: false,
   refreshSince: null,
+  refreshErrored: false,
 };
 
 // Per-cycle tile bookkeeping, reset whenever a load cycle opens.
@@ -105,9 +112,14 @@ export function radarStatusReducer(
       else if (!state.loadAborted) errored = true;
       return { ...state, loadingSince: null, errored };
     }
-    case 'tileErrored':
-      if (state.errored && state.loadErrored) return state;
-      return { ...state, errored: true, loadErrored: true };
+    case 'tileErrored': {
+      const refreshErrored =
+        state.refreshErrored || (action.refresh === true && state.refreshSince !== null);
+      if (state.errored && state.loadErrored && refreshErrored === state.refreshErrored) {
+        return state;
+      }
+      return { ...state, errored: true, loadErrored: true, refreshErrored };
+    }
     case 'tileLoaded':
       if (state.loadingSince === null || state.loadSucceeded) return state;
       return { ...state, loadSucceeded: true };
@@ -138,15 +150,16 @@ export function radarStatusReducer(
         ...FRESH_CYCLE,
         loadingSince: null,
         refreshSince: null,
+        refreshErrored: false,
       };
     case 'refreshAbandoned':
-      if (state.refreshSince === null) return state;
-      return { ...state, refreshSince: null };
+      if (state.refreshSince === null && !state.refreshErrored) return state;
+      return { ...state, refreshSince: null, refreshErrored: false };
   }
 }
 
 export function radarIndicator(state: RadarStatusState, now: number): RadarIndicator {
-  if (state.errored) return 'error';
+  if (state.errored || state.refreshErrored) return 'error';
   if (state.loadingSince !== null && now - state.loadingSince >= RADAR_LOADING_GRACE_MS) {
     return 'loading';
   }

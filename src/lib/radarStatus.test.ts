@@ -252,6 +252,41 @@ describe('gated live refresh (hung host surfaces as dots)', () => {
     expect(radarIndicator(s, 0)).toBe('error');
     expect(radarIndicator(s, 10_000)).toBe('error');
   });
+
+  it('a clean pan does not turn a failing live refresh back into "loading"', () => {
+    // The refresh errors (and is cancelled, keeping its clock); a pan then
+    // loads the on-screen source cleanly, clearing the on-screen error.
+    const s = run([
+      { type: 'refreshStarted', at: 0 },
+      { type: 'tileErrored', refresh: true },
+      { type: 'loadStarted', at: 1_000 },
+      { type: 'tileLoaded' },
+      { type: 'loadSettled' },
+    ]);
+    expect(s.errored).toBe(false);
+    expect(radarIndicator(s, 10_000)).toBe('error');
+  });
+
+  it('the refresh error clears once a later refresh succeeds or live is left', () => {
+    const failed = run([
+      { type: 'refreshStarted', at: 0 },
+      { type: 'tileErrored', refresh: true },
+    ]);
+    expect(radarIndicator(run([{ type: 'refreshSucceeded' }], failed), 40_000)).toBeNull();
+    const left = run([{ type: 'refreshAbandoned' }], failed);
+    expect(left.refreshErrored).toBe(false);
+  });
+
+  it('an on-screen error during a refresh is not pinned to the refresh', () => {
+    const s = run([
+      { type: 'refreshStarted', at: 0 },
+      { type: 'tileErrored' },
+      { type: 'loadStarted', at: 1_000 },
+      { type: 'tileLoaded' },
+      { type: 'loadSettled' },
+    ]);
+    expect(s.refreshErrored).toBe(false);
+  });
 });
 
 describe('frameChanged', () => {

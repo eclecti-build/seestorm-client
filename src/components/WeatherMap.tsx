@@ -1343,7 +1343,10 @@ export default function WeatherMap() {
         (radarId === `radar-${activeRadar.current}` ||
           radarId === pendingLiveRefresh.current?.sourceId)
       ) {
-        dispatchRadarStatus({ type: 'tileErrored' });
+        dispatchRadarStatus({
+          type: 'tileErrored',
+          refresh: radarId === pendingLiveRefresh.current?.sourceId,
+        });
       }
     });
 
@@ -2289,7 +2292,7 @@ export default function WeatherMap() {
       <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/60 to-transparent p-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))] pointer-events-none">
         {/* Radar status dots — anchored just above this bar (bottom-full),
             which already pads for the bottom safe-area inset. */}
-        <RadarStatusIndicator state={radarIndicator(radarStatus, radarNow)} />
+        <RadarStatusIndicator state={radarIndicator(radarStatus, radarNow)} live={isLive} />
         <div className="max-w-4xl mx-auto space-y-2 pointer-events-auto">
           {history.length > 0 && (
             <>
