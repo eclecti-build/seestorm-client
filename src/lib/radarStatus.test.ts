@@ -304,13 +304,71 @@ describe('frameChanged', () => {
     expect(radarIndicator(s, 1_000)).toBeNull();
   });
 
-  it('keeps the error until the new frame settles', () => {
+  it('keeps the dots up, as loading, until the new frame settles', () => {
     const s = run([
       { type: 'frameChanged', at: 0 },
       { type: 'tileErrored' },
       { type: 'frameChanged', at: 200 },
     ]);
-    expect(radarIndicator(s, 200)).toBe('error');
+    expect(radarIndicator(s, 200)).toBe('loading');
+  });
+
+  it('a failed live refresh then scrubbing back reads loading, not error, for the new frame', () => {
+    const steps: RadarStatusAction[] = [
+      { type: 'refreshStarted', at: 0 },
+      { type: 'tileErrored', refresh: true },
+      { type: 'refreshAbandoned' },
+      { type: 'frameChanged', at: 1_000 },
+    ];
+    const s = run(steps);
+    expect(radarIndicator(s, 1_000)).toBe('loading');
+    const settled = run([{ type: 'tileLoaded' }, { type: 'loadSettled' }], s);
+    expect(radarIndicator(settled, 1_100)).toBeNull();
+  });
+
+  it('a historical frame error, then a frame that also errors, reads error again', () => {
+    const s = run([
+      { type: 'frameChanged', at: 0 },
+      { type: 'tileErrored' },
+      { type: 'frameChanged', at: 200 },
+    ]);
+    expect(radarIndicator(s, 200)).toBe('loading');
+    expect(radarIndicator(run([{ type: 'tileErrored' }], s), 210)).toBe('error');
+  });
+
+  it('a new frame that settles with nothing loaded reads error again', () => {
+    const s = run([
+      { type: 'tileErrored' },
+      { type: 'frameChanged', at: 200 },
+      { type: 'loadSettled' },
+    ]);
+    expect(radarIndicator(s, 210)).toBe('error');
+  });
+
+  it('never hides the dots between frames against a failing host', () => {
+    const steps: RadarStatusAction[] = [
+      { type: 'frameChanged', at: 0 },
+      { type: 'tileErrored' },
+      { type: 'frameChanged', at: 125 },
+      { type: 'tileErrored' },
+      { type: 'frameChanged', at: 250 },
+      { type: 'tileErrored' },
+    ];
+    let s = INITIAL_RADAR_STATUS;
+    const seen = steps.map((a) => {
+      s = radarStatusReducer(s, a);
+      return radarIndicator(s, a.type === 'frameChanged' ? a.at : 0);
+    });
+    expect(seen.slice(1)).not.toContain(null);
+  });
+
+  it('a live refresh error with no frame change still reads error', () => {
+    const s = run([
+      { type: 'refreshStarted', at: 0 },
+      { type: 'tileErrored', refresh: true },
+    ]);
+    expect(radarIndicator(s, 0)).toBe('error');
+    expect(radarIndicator(s, 10_000)).toBe('error');
   });
 
   it('keeps an already-running loading clock so fast playback still reaches the grace', () => {

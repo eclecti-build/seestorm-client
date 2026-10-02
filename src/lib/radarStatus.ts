@@ -11,6 +11,8 @@
 //     raised when a load settles with no tile loaded at all: MapLibre fires
 //     no `error` for an HTTP 404 yet counts the tile as settled, so an
 //     all-404 frame would otherwise clear the dots over blank radar.
+//     An error carried over a frame change reads as "loading" while the new
+//     frame loads: the dots stay up, but don't blame a frame not yet failed.
 //
 // WeatherMap feeds MapLibre events in as actions; the selector takes `now`
 // so the grace period is testable without timers.
@@ -43,6 +45,9 @@ export interface RadarStatusState {
   loadingSince: number | null;
   // Sticky error flag shown to the user.
   errored: boolean;
+  // Whether `errored` was carried over from the previous frame and the new
+  // frame's cycle has neither errored nor settled yet: shown as "loading".
+  errorInherited: boolean;
   // Whether a tile errored during the current (or most recent) load cycle.
   // A settle only clears `errored` when this is false.
   loadErrored: boolean;
@@ -89,6 +94,7 @@ export type RadarIndicator = 'loading' | 'error' | null;
 export const INITIAL_RADAR_STATUS: RadarStatusState = {
   loadingSince: null,
   errored: false,
+  errorInherited: false,
   loadErrored: false,
   loadSucceeded: false,
   loadAborted: false,
@@ -117,14 +123,14 @@ export function radarStatusReducer(
       else if (state.loadSucceeded) errored = false;
       // Nothing loaded and nothing aborted: every tile failed silently (404).
       else if (!state.loadAborted) errored = true;
-      return { ...state, loadingSince: null, errored };
+      return { ...state, loadingSince: null, errored, errorInherited: false };
     }
     case 'tileErrored': {
       const refreshErrored = state.refreshErrored || action.refresh === true;
       if (state.errored && state.loadErrored && refreshErrored === state.refreshErrored) {
         return state;
       }
-      return { ...state, errored: true, loadErrored: true, refreshErrored };
+      return { ...state, errored: true, errorInherited: false, loadErrored: true, refreshErrored };
     }
     case 'tileLoaded':
       if (state.loadingSince === null || state.loadSucceeded) return state;
@@ -136,8 +142,15 @@ export function radarStatusReducer(
       // Unlike loadStarted, always opens a fresh error cycle — an error in the
       // previous frame must not stick to a new frame that loads cleanly. An
       // already-running clock is kept so fast playback against a slow host
-      // still reaches the grace threshold.
-      return { ...state, ...FRESH_CYCLE, loadingSince: state.loadingSince ?? action.at };
+      // still reaches the grace threshold. A carried-over error keeps the dots
+      // up (no blinking between frames against a failing host) but reads as
+      // loading until this frame's own cycle errors or settles.
+      return {
+        ...state,
+        ...FRESH_CYCLE,
+        errorInherited: state.errored,
+        loadingSince: state.loadingSince ?? action.at,
+      };
     case 'refreshStarted':
       // A restart of a stalled refresh keeps the original clock, so the
       // dots don't blink off.
@@ -154,6 +167,7 @@ export function radarStatusReducer(
       return {
         ...state,
         errored: false,
+        errorInherited: false,
         ...FRESH_CYCLE,
         loadingSince: null,
         refreshSince: null,
@@ -166,7 +180,8 @@ export function radarStatusReducer(
 }
 
 export function radarIndicator(state: RadarStatusState, now: number): RadarIndicator {
-  if (state.errored || state.refreshErrored) return 'error';
+  if (state.refreshErrored) return 'error';
+  if (state.errored) return state.errorInherited ? 'loading' : 'error';
   if (state.loadingSince !== null && now - state.loadingSince >= RADAR_LOADING_GRACE_MS) {
     return 'loading';
   }
