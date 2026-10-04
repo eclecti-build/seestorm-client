@@ -8,9 +8,18 @@
 // composite. The server rounds non-5-min-aligned timestamps internally, but we
 // round client-side anyway so the tile URL is stable across clients — better
 // CDN / browser cache hit rate.
+//
+// The URLs use a custom scheme, not https: MapLibre hands them to
+// `loadRadarTile` (registered via `addProtocol`), which fetches the https
+// tile itself — see radarTileLoader.ts for why.
 
-const LIVE_TILE_URL =
-  'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png';
+export const RADAR_TILE_PROTOCOL = 'seestorm-radar';
+
+const IEM_TILE_BASE = `${RADAR_TILE_PROTOCOL}://mesonet.agron.iastate.edu/cache/tile.py/1.0.0`;
+
+const LIVE_TILE_PREFIX = `${IEM_TILE_BASE}/nexrad-n0q-900913/`;
+
+const LIVE_TILE_URL = `${LIVE_TILE_PREFIX}{z}/{x}/{y}.png`;
 
 const FIVE_MIN_MS = 5 * 60_000;
 
@@ -46,7 +55,15 @@ export function radarTileUrl(at: Date | 'live'): string {
     pad2(snapped.getUTCHours()) +
     pad2(snapped.getUTCMinutes());
 
-  return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-${ts}/{z}/{x}/{y}.png`;
+  return `${IEM_TILE_BASE}/ridge::USCOMP-N0Q-${ts}/{z}/{x}/{y}.png`;
+}
+
+/**
+ * Whether a concrete tile URL (template filled in) belongs to the live
+ * composite layer, as opposed to a historical or HRRR forecast frame.
+ */
+export function isLiveRadarTileUrl(url: string): boolean {
+  return url.startsWith(LIVE_TILE_PREFIX);
 }
 
 /**
@@ -59,5 +76,5 @@ export function radarTileUrl(at: Date | 'live'): string {
 export function hrrrTileUrl(minutesAhead: number): string {
   if (minutesAhead < 0) throw new Error('hrrrTileUrl: minutesAhead must be >= 0');
   const snapped = Math.round(minutesAhead / HRRR_STEP_MINUTES) * HRRR_STEP_MINUTES;
-  return `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/hrrr::REFD-F${pad4(snapped)}-0/{z}/{x}/{y}.png`;
+  return `${IEM_TILE_BASE}/hrrr::REFD-F${pad4(snapped)}-0/{z}/{x}/{y}.png`;
 }
